@@ -3,7 +3,7 @@
 # --- CONFIGURATION ---
 TARGET_NAME=$1
 SKILLS_BASE="/home/$(whoami)/Documents/Skills_bugbounty"
-MASTER_CLAUDE_MD="$SKILLS_BASE/SKILLS/Claude.md"
+MASTER_CLAUDE_MD="$SKILLS_BASE/SKILLS/CLAUDE.md"
 BROWSER_DIR="$SKILLS_BASE/playwright-chrome"
 
 # Capture launch dir so the workspace lands where the user invoked the script,
