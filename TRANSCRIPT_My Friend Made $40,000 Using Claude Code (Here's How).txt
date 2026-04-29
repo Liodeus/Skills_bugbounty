@@ -1,0 +1,228 @@
+00:00:00
+This is Douglas and he has recently made over $40,000 at a live hacking event with Hacker 1 simply by using Cloud Code and some of his custom skills that he has created based on his reports on Hacker 1. But before we get into this, I want to quickly just announce what I'm going to be doing moving forward with these types of series. And honestly, I've been seeing a lot of people create their own Claude skills and using them to make money, and I wanted to learn how to do it. So, moving forward, I'm going
+
+00:00:24
+to try and make a couple of videos around making your own skills or maybe even bring in some other guests onto the channel and having him share the screen like today's episode and showing us how to do it. But before we do this, do me a favor, drop me a comment saying, "Claude, if you want me to make a video on creating our first Claude skill using just public data that's out there on the internet and then testing it out and seeing if it finds vulnerabilities or not. So, all you have to do is drop a
+
+00:00:45
+comment saying Claude and I will make that for one of the upcoming videos. But for now, let's jump into the video with Archangel and see how he's using Claude to find vulnerabilities on his bug bounty targets. All right, man. Show me. I know you've been building a lot of cool stuff using AI and I know we you and I were talking earlier and you mentioned you use cloud or you know you make your skills to hack on these different programs. First of all, how did you make these skills? Like give me
+
+00:01:09
+the structure behind the skills. How does that look? What I did was at the recommendation of some other hackers, I took uh an export of all of my reports on hacker one. Um, I think I just gave Claude my hacker one API token and told it to download all my reports. And then I just gave it the instruction to build uh skills um based on what it noticed in my like 2000 something reports so that anytime I spin up a cloud session, it knows the types of vulnerabilities I'm looking for, how to exploit them. And
+
+00:01:41
+then the the nifty part is that it can grow, right? like as I report more and more vulnerabilities, I can have it just like refresh the skills based on these new reports that have come in. Any collabs that I do, like I have a couple of collabs with um like with Alex Chapman, uh with with you, with other just high-profile hackers and so if I've got those reports in my inbox, then uh Claude is able to see them and I can build skills based off of off of those uh those reports as well. >> Um
+
+00:02:07
+>> and then you use all these skills, the same skills across all the programs, but how do you customize this based on each program? How does that work? >> Yeah. So, so I've got a a blanket uh like default agent file that I've I've created that I'll uh I'll use whenever I start any any program. Um however, as as I get more involved in the program and Claude learns about the the different scope, um it can update its memory um to so it's not going to update its individual agent file, but it'll update
+
+00:02:36
+its memory file to know what is important to this to this particular program. So, for example, when hacking on the uh Amazon VRP uh program, uh like I really really like to find XSS because they pay well. Um and so uh in the in my Amazon directory, I'll have the agent might have a a note in its memory file saying really target um cross-ite scripting vulnerabilities, one because they're more common in this program, but also because they pay well. whereas another program might not pay uh might not pay that much or might not be
+
+00:03:10
+interested in in XSS at all just because it requires uh user interaction. >> So you're heavily giving this a framework per program like look for excs for this one or this company may be notorious for idors. So it also prioritizes these vulnerabilities that are worth it for these bug binding programs versus the ones that may not care for the same vulnerabilities. So the structure is based on v type and impact per program. >> Yeah, exactly. Uh, but that that only works if you have a good agent file to
+
+00:03:37
+begin with. Um, like if I were if I were to just take out of the box cloud code, then I'd have to wrestle with it every single time that I start up a new session telling it, okay, you're a bug bounty hunter. We're going for impact here, not just uh not just for vulnerabilities if we're we in a pen test. Because cloud code what it sometimes does unless you tell it specifically like you are a bug bounty hunter is it'll like it'll focus on things that don't have a lot of impact
+
+00:04:01
+or are just like defense and depth misconfigurations or things that you know like you and I know a program would never pay for. Um so for example like cores misconfigurations um or theoretical vulnerabilities or vulnerability which isn't exploitable now but then may be exploitable in the future like no program is going to pay for those. Um, but cloud code, unless you tell it otherwise, it like in your initial agent file, it's going to focus on those and, you know, give you that big like jackpot or critical
+
+00:04:29
+vulnerability found, and you're going to have to kind of steer it away from those and coach it. Um, and so just to like avoid that, um, you can create a a very detailed um, and this we're spending the tokens on, creating a very detailed agent file so that you can just ignore those from the offset. Um, and then so what I do, I've got this I've got this agent file which I u which I'll create in every single directory um that I'm that I'm hunting in. So um for example, I'm not sure if my screen's being shared
+
+00:04:58
+now, but if I wanted to like hunt say uh on John Deere's uh uh BDP, I could just say I just say hunt John Deere and then it creates a uh a t right creates a John Deere directory in my targets folder. Um, and if we ls, we've got my claude agent file hidden here, or which will tell Claude the the general types of vulnerabilities that I like to hunt for and uh the reason the reason why we need to go for impact and not just not just blanket vulnerabilities. >> So, hunt is just an alias and that alias
+
+00:05:30
+does the copying your agent file, creating the folders and the structure around everything else. >> Yeah, that's right. It's like it's just like a four-line alias. >> Where do you import your skills? How do you import your skills? Where do those come to play? So yeah, I put my skills in the just like home directoryskills. Yeah. So I've got like a a fuff skill which I just uh copied from um Joseph Thacker's uh GitHub. So shout out to him. I got like a hunt at skill, hunt
+
+00:05:57
+blind xss, which has my uh which has my blind xs payload. I've got a report writing skill. Um and then yeah, just a different type of skill for every single type of vulnerability I might be looking for. Um, and then so for example, if we wanted to just like I'll just do like u hunt a hunt rcce. >> So I'm assuming with the skill and the reports the reports are all the reports that were RC related and then you imported those into the markdown file and then skill.md is how you verify and
+
+00:06:27
+look for these different RC's, right? >> Yeah, that's exactly right. So I'll go ahead and cat skill.md right now. Um, and so if we look at it, we can see not go up too far. There's a description of the skill, but then you're you're assisting Archangel hacker one. Use RC report blah blah blah blah. Um, and then RC, it tells it basically how important it is. RC is the holy grail and bug bounty. If you ever get this, look for this. Then we've got a number of uh different chains we can follow. Um,
+
+00:06:53
+things to look out for um CVES that might be uh that might be useful, etc. And then we just it goes down the entire uh the entire skill um with the impact um and then different things to consider. So and the same thing can uh we can look at the same thing for the fuff one, right? So go cd fuff and this is on uh just Joseph actor's github. So this is you can go and look at the skill yourself over uh over there. Let's go ahead and ck skill.md. >> So it's pretty much a how to use fuff
+
+00:07:27
+and knows exactly what to do. Yeah. Yeah. Yeah. Exactly. Exactly. So it gives it there's lots of examples because I mean cloud code it's a you know it's just you're explaining to it using natural language and so the more context you can give it around not only what to do but why to do it it's going to it's going to perform better. So so any yeah those are those are skills those are skills I've given it. Um I can add more skills as I as I find more types of vulnerabilities.
+
+00:07:52
+In fact I've got a couple on on my back burner that I've been waiting to I've been waiting to write. But if you want to go back to my targets directory, uh John Gear, then yeah, so we've we've got uh we've got my claude MD, which is my agent file, which basically I I use to tell Claude that uh you're not a pentester. Uh you are a bug bounty hunter. And so we always go for impact. Always impact. Always impact. Always impact. And I still even even with this agent file, I
+
+00:08:24
+sometimes have to remind Claude that that we're going for impact. Um, and not just going for for vulnerabilities that that nobody cares about. Um, and it uh it also prevents or having this agent file also prevents uh me from having to explain and justify my activity to Claude because by default it'll be like you can't uh you can't perform this uh this activity because it's you know against my ethical boundaries or whatnot. But if it knows ahead of time that you're a bug bounty enter and this
+
+00:08:54
+is an authorized engagement, you just get to avoid having to to work around that entirely. >> This is great. It seems like it's like automation built on crack at this point, right? It's like it's even better than automation because you're no longer just automating your recon, but you can also offload all your findings or at least like the low hanging fruits that you would look for easily and maybe even miss sometimes, right? Because you're not testing every parameter, every entry
+
+00:09:16
+point. You can have Cloud do it. How much have you made using Cloud Skills in the last, let's say, 90 days of doing this? >> 90 days is tough to say, but I can tell you that at the last live hacking event, um, I used Cloud Code entirely. I basically just used Cloud Code, um, and made between 40 and 50,000. >> Holy dude. Congrats. That's awesome. >> Yeah. Yeah. And and not only does it help you find those low hanging fruits, but it it helps you test things that are normally a pain to to test manually. So
+
+00:09:47
+for example, one of my vulnerabilities that I I found during the the last lab packet event I had to do some like web hook manipulation and like nobody wants to set like write a Python script to make a web hook connection and then mod make modifications dur while the connection's open but cloud code can just do it you know within like a couple seconds and so just being able to to quickly tell cloud code you know we've got this web hook connection here's a bug I want to try using that web hook
+
+00:10:13
+connection do it it just like saves so much time so much time and I I was able to find bugs that nobody else like even looked for because I was doing things that no manual hunter would want to do. >> Yeah. I mean, it's it's a lot of grunt work, right? It's a lot of setting up, modifying, understanding things, and then going back and forth, and they could just do that in parallel a lot easier. But can we see this in action? Can you maybe do a little bit of uh using your skills to do some stuff? We
+
+00:10:38
+can use John Deere as a program like you have it right now. >> Sure. So, let's go ahead and say uh so we're in our John Deere directory. We don't have any uh any customizations. This is just cloud code out of the box with my agent file. So I'll say like claude and then I'll do the dangerously skip permissions for the purpose of this demonstration. Don't recommend it. Um but uh I don't want to be flicking through a bunch of like yes no prompts uh while on stream. Um
+
+00:11:09
+and yes, I trust this holder. Okay, so we're in cloud right now. We're in for Yeah, we're in cloud code. We can say um our target is currently John Deere via um John Deere's public uh BDP located on hacker 1. Um now in this if we had a particular uh application that we were looking to test um we might do that. But let's say we're let's say we're not actually sure what we want to test. I'm not sure what part of the scope I want to test, but I know John Deere really cares about
+
+00:11:48
+acquisitions. Um, can you find any niche acquisition domains that uh we may start looking on? And then it's going to run for uh for a minute. >> How many tokens are you burning through? Is it just one cloud max or do you have multiple? >> I I have one cloud max. Um, there have been a couple of times where I've hit my hit my limit. Um, and I've had to wait like a couple hours, but so far my usage of Cloud Code has not has not necessitated getting a second Cloud uh Cloud Max subscription. But I do know
+
+00:12:23
+that there there are others who >> Yeah, I was going to say when I talked to Reszo, he mentioned he has like three or four and he's like, you know, make paying 400 bucks a month versus like making a $800 bounty in a couple hours. It's it works. >> Yeah. Yeah. It's it's a great it's great return on investment. It's just a matter of how much uh time I I want to spend. Like I'm not having mine run every single like every single minute of the day. And I think he
+
+00:12:45
+is. And I I could, but I've just not pulled the trigger. >> Has it been a time when you've launched this and you're like, "Hey, go find vulnerabilities overnight. You go to sleep, you come back and you look at the results, or are you just actually actively doing it while you're online yourself?" >> Uh yeah. No. I'll when I'm in an LG, uh I'll tell it to to look overnight. Or I'll say, "I'm going to bed now. look for keep looking for vulnerabilities on
+
+00:13:07
+this target. Uh do not stop until it is like 8 am. Uh at which point I'll get back to my computer. Uh if you are about to give me a summary, pause, check the time, and if it is not 8 a.m., do not stop. And that usually does a pretty good job of getting it to to continue. Occasionally, it will it will like think, "Oh, there's only two hours to go. We're getting close." And then it'll like work for like 10 more minutes and be like, I guess I'm close enough. But most of the time it'll get it to to
+
+00:13:36
+continuously work through the night. >> Dude, that's baller. That's insanely cool. I want to see what this finds. I'm excited to see what this finds. >> It looks like it's finding a bunch of different acquisitions like Smart Apply, Centa, Gus, Spark AI, Tenna, Joyide, Light. Um I think Gus and Tenna are newer acquisitions like maybe in the last six months. >> And it's cool. It's also taken like John Deere cloud and I know that's a big target on their end.
+
+00:14:03
+>> Yeah, exactly. >> To go after >> and it's finding things that maybe like you wouldn't know were related like blue river technology or bare flag. I feel like uh cloud could also made reconnaissance a little bit I don't want to say obsolete but probably easier for anyone that doesn't want to spend the time to do recon and find these cuz back in our days uh back in my day dude we'd have to do like a who is and like verify the domain when it was registered when
+
+00:14:26
+it was transferred do some digging into like whether or not this company was you know acquired but now you just pretty much told cloud hey find acquisitions and you said niche ones and it's finding some really crazy interesting ones Right. >> Yeah, exactly. Exactly. Um, and so I'm not sure how deep it's going to go. Like it might it'll hopefully stop here soon so we can kind of like actually pick one or it might uh might work for the next 20 minutes. So it looks like bare flag uh robotics
+
+00:14:59
+is an acquisition. Where would you recommend starting uh if we wanted to um look for low hanging fruit? >> And is this the flow that you usually do for any of your new targets or is this custom for any target that uh you find? Like do you do something custom for each one? you know, uh, this, so when I approach a target, I usually have a like particular asset that I want to hack. And so I'll like I I probably wouldn't have come in and be like, "Tell me all the acquisitions and then pick
+
+00:15:34
+one for me." I would have been like, "No, I know I'm going to to hack on on Harvest Profit." Um but we can like I don't know let's maybe we should just start with harvest profit because I know that's a that's a post off um application and it has a >> but my question is for right now it says you know it's going to concretely do subdomain dump probe each domain and then mine do the main size js bundle are these based on your your agent file that you have
+
+00:16:04
+>> or is that based on cloud doing that itself? >> No no that that's based on my agent file. Um, I've noticed in the past in a lot of my vulnerabilities are because uh hidden endpoints and hidden um scope is often located in the JS bundles and so I like tell it the importance of mining mining mining mining and probing just to get a full uh a full picture of the application before going deep. Um because otherwise and this was a problem I struggled with beforehand like I would
+
+00:16:32
+give it say like uh you know John Deere.com and then it would ask for off and it would hit the main application and not really venture outside of that just that like those couple root paths. Whereas um by telling it to mine and look for hidden endpoints and look for hidden scope and other other assets within the JavaScript, it it knows to go wide and look for really niche stuff, which is which is how I've I've had a lot of success in uh in Bug Bounty is just by finding weird esoteric um
+
+00:17:02
+applications and and endpoints. Yeah, I mean it just takes like a slash API v2 users to just get, you know, this user data or some obscure way of like registering a new user that's in the JavaScript file for gain access to some website that doesn't have the registration in the UI, right? And next thing you know, you're hitting some like gold mine of, you know, 40 vans because nobody else thought about looking at the JavaScript file or people just don't want to spend the time to do it because
+
+00:17:27
+it takes a lot of time to do it, too. >> Well, yeah. Before like before AI, you had to like like control F through JavaScript. It's like, who wants to do that? >> Oh, yeah. You would have to get the JS map maybe or, you know, reverse the JS map if you're lucky enough to get it, too. >> Yeah. It was just, yeah, pain in the ass. No wanted their eyes to bleed. But now I can say like, hey, let's let's mine, you know, let's mine the main sites JavaScript bundle. Um, so here,
+
+00:17:48
+let's actually see what it does. Like, sure, main or mine the uh main sites JS bundle for API endpoints and uh let me know what you find. How much cloud did you use to create your cloudmd? >> Uh it was you know it was entirely cloud like I would say so when I was when I was building it I would say I'm getting claude is have spending too much time looking for uh for idors. So this is actually a problem I started with because like a lot of my reports in hacker one are idors and like arvback
+
+00:18:23
+vulnerabilities >> which are easy to find but not very interesting. And so when I first gave it all of my reports, uh, Claude was like spending all of its time just like looking for integer idors. And I'm like, I I know how to find those. Those are easy. This is not what I want to use my tokens on. Uh, so I asked Claude, I'm like, can you please make a change to this template agent file, which says that idors are important, but please don't focus on those. And so it was able to it was able to do that. um when I'd
+
+00:18:55
+find a new type of vulnerability, I would have Claude uh add in add in a note about that. Um so for example uh a while back um found a uh a vulnerability which in which a uh an internal octa unintentionally had public or self- signup uh available and so I could sign up for I could register for within an internal octa. Um, and so I told I told uh Cloud Code about this like, hey, my my agent missed this missed this vulnerability. Modify my agent or my agent file to be able to know that this is a possibility
+
+00:19:37
+and to keep an eye out for it. And so it did. >> So now every time you have a new target that has a cell sign off available, it means C for you. >> Yeah, exactly. >> All right, let's see what it found. It says findings from the apex. No bundles, no API calls. This might be because like if I remember correctly um like bare flag might just be like a static a static web page. I don't think it's an actual application. Um but if we want like I know that harvest profit is
+
+00:20:03
+a like is an application that we can we can hunt off. >> Let's try it. >> So yeah, let me go get some >> let me get some off. Uh I'm just going to go to harvestproit.com. Uh let's see. Try it for free. Start 14-day trial. So I'm just going to tell cloud code I'm going to say okay we are switching gears uh to harvest profit because it has authentication and is an actual web app. I'll give you my session which is here. So then let me just grab my session ID
+
+00:20:42
+from my cookies in my browser. I'm a sucker for code blocks even though cloud doesn't need them. Just muscle memory, right? >> Oh, it mean it's going after the JWT token to see if it can do some stuff to it. HST56 not worth a weak secret. Uh conclusion test later says hard harvest profit isn't listed in. Let me just double check. They are a acquisition but maybe they're not listed on John's VDP. No, it's definitely in scope. Just not Yeah, it's definitely in scope. Harvest profit is
+
+00:21:14
+definitely in scope. I just checked here. >> Okay. So, I'm assuming now it's just going to make a request in the JS file, dump it, >> and see what's on there since you uh authorized it, right? >> And it should start uh it should start fuzzing and looking for additional JavaScript. Let's see. Need a deeper probe. Let me uh check this properly and grab the main JavaScript bundle and check docs. Okay, so it's knows it needs to look for the docs for more information. So I put a
+
+00:21:45
+cost reference whatever's on the docs API and then whatever's in the JS files and kind of get an understanding of how everything works. So when you're testing like idors and things like that, let's say if uh you have to do UI ids, are you providing a different UIDS or you just saying go figure it out on your own? Yeah, I just have it figured out on its own. >> Well, what happens like let's say if it's like a I'll use a I don't know, let's say bank, right? You have UU ID
+
+00:22:08
+but you can't interact with other users. Then what do you do then? Do you provide it other accounts that you have for testing purposes or? >> Yeah, that's kind of what what you have to do unless you want to run the risk of accidentally doing damage to >> some you don't want that. >> We don't want that. Nope. No, thank you. >> And I've had situations like that where Claude has been like pretty certain that it could that a vulnerability exists, but I don't have another uh I don't have
+
+00:22:32
+another session or another user uh particularly on like applications that require the program to give you elevated access. And so in those cases, you can just report it and say like based on the evidence, I'm pretty sure this is a vulnerability. Feel free to close as informative if it's not actually vulnerable. But I I think I think one's here. >> I was testing something on a pentest this week and I had to tell it like do not modify data if you modify revert back. >> Yep.
+
+00:22:58
+>> So if it's like changing my phone number or my my 2FA, you're not changing it and then like I can't get back into my account or changing my password and I can't get back in the account. I had this this problem happened to me uh last week where so I had a vulnerability and well it was kind of a chain. There was one that was a vulnerability but not without any security impact where I could bypass a like registration like registration was normally like disabled and I was able to to bypass
+
+00:23:26
+authorization just to get like an account and I was able to get two accounts. Now I found a pretty impactful IOR. It was like a high um where one account could delete another account and Claude overnight found that vulnerability, deleted my second account, but by the time that I like was able to like check it in the morning, the team had noticed like my activity and fixed the way to bypass registration. And so I'm like, uh, I can't like I can't reproduce it anymore because I don't have a second account
+
+00:24:00
+because they fixed the they fixed the the registration bypass. And so I I ended up having to just give them access to my to my one account and being like, this here's what I've got. And they they were able to they were able to confirm the vulnerability existed and um and actually and award it. But it was so stressful when when Triage came back and they're like, "We can't create an we can't create a uh a second you we can't create an account to test this. Are you sure it's still vulnerable?" And I'm
+
+00:24:28
+like, "Oh god, I just spent like three days on this vulnerability." Um, you know, or I guess three days having Claude like look for vulnerabilities and finally found this one. And now Triage can't reproduce it and neither can I because they fixed part of it. So fortunately, I still got my bouncy, but it was it was a stressful Friday. I played that for free. Dude, as you were telling me about your account getting deleted, I was like, "Oh, please tell me cloud didn't go through and delete
+
+00:24:50
+everybody's accounts." >> No. Goodness, no. >> Could you imagine? >> Yeah. Like I some I sometimes wonder how like how responsible programs will hold you. Like if if I specifically tell Claude like do not delete data. I repeat, do not delete data. And then Claw deletes data. It's like what what do I tell a program? >> I don't know. >> Whoops. >> Okay, let's see. Uh, honest status. So, club whenever has a bad news to tell you, it'll use the word honest. It's
+
+00:25:22
+never >> using a gold mine. You found the gold mine. You hit the jackpot. It's honest. >> Finding the API. Okay. Maybe it does have maybe my session did not have access to the API. So, what I'm going to do is I'm going to make a request on the uh on harvest profit and I'm going to just give it my request. So, let's see. Where is harvestp profofit again? artistprofit.com. Okay, so I'm going to just hang tight while I grab I don't even have Kaido open right now, so I'm
+
+00:25:55
+just going to have to grab it from the network tab. >> Speaking of Kaido, do you use the Kaido scale at all for any of these? >> No. No, but I know I need to. I know I need to. I I have to definitely recommend it, but I haven't set it up myself. Yeah, I mean it would be interesting to find like uh different syncs that you're looking for and like going through all your old data to find like excess that you may have missed from all these skills that you have. I think it' be a really interesting one to
+
+00:26:16
+test out. >> Okay, so after turning on Kaido and capturing a request, I'm actually just going to give uh Claude my full like my entire request so it has the cookies. Okay. Um, I'll say here is a request to the API. Please use this authentication to look for further vulnerabilities. So, I just gave basically my entire request from um >> an example query that you're making with GraphQL. >> Yeah. So, yeah. So, it has my cookies, has the endpoint, and so now it should be able to actually look for stuff. And
+
+00:26:57
+I've had to do that a number of times. Just give it a give it a single request so it knows what to do. >> Yeah. I mean, I don't know about you dude, but I freaking hate GraphQL and I feel like this is a easy way to go. Not my problem anymore. You figured out how cloud go. >> Exactly. Exactly. So, here here's Claude being like hyperbolic again. Massive in >> you know that it's like really serious when it starts cussing. like uh at some point it was like I found a I found a
+
+00:27:26
+crit on um on Monday and it was like holy like okay >> I saw you post that. Yeah. >> Yeah. Yeah. It's so funny. I I don't know why it just I can't take Claude seriously when it uh when it says things like that. >> My immediate reaction to the gold mine thing. It's like massive gold mine. We just hit Jack. But I'm like relax dude. You haven't even done anything yet. But like chill. Like I lose my when we find a good bug, but like you're you I think we have a little bit more than
+
+00:27:54
+usual. >> Highest EV I'm not sure what EV is. Uh highest EV test right now. If exposed without a authorization, every AG in the system is readable by ID. So the critical door, >> but you just to be clear, you don't have anything for GraphQL, right? You just have vulnerability types. It's just going to it's going based on the documentation in the JavaScript file and doing all this, right? >> Yeah, exactly. I'm not sure what these GIs are. So I can actually if you press
+
+00:28:18
+like uh command O or control O, what was it? Is it control or command O? Yeah, control O. It'll like you'll be able to see the actual full request. >> It becomes verbose. >> Yeah. Well, not even verbose. Like you see where it says like all this like plus 19 lines, control O to expand. >> You by default can only see like the first like four lines. But if you're like, well, I actually want to know what those errors were. I want to know what this data was. >> Enumerating everything to user entity.
+
+00:28:46
+It's just coming up with tasks and doing some findings at the same time. >> Yeah. Yeah. Yeah. See the node ID resolver uh for perm the error message distinguishes between exists but hidden and not found. Okay. So it's it's like it okay so it's kind of found in Oracle which isn't very exciting. Um >> I mean it's enumeration. It's a good finding for a pentest at least a not bug bounty but like >> or if you need to find a user ID for something else you can chain with you
+
+00:29:14
+have this at least right >> yeah exactly exactly so yeah it's not not terribly exciting but I'll see so it's like before I do anything I could touch another user's data I want to confirm the purchase the two viable steps map the full schema by error buzzing or aggressive uh test right side authorization on the machine user or machine upsert mutation with another user's machine ID speed. >> One question that I have is so what you just showed me is practically what you
+
+00:29:42
+do with all these applications. What about u like a blackbox approach? Let's say you go to this domain and it redirects you to an octa one login page but you want to test it out. Do you tell it like hey I want to just approach this target or do you give more context? Like how does that work? >> Uh sometimes I'll I'll just say I want to approach this target. Um, sometimes I'll say what the what the goals are, like um, I really want to find, um, you know, an authentication bypass. Only
+
+00:30:10
+look for those. Um, occasionally I don't really know what I'm looking for, but I just know I want to bug. And this is this is often what I'll do, like if I'm going to bed at night and I'm kind of tired and I just want to like shoot my shot, I'll just say, >> um, here's this target. Find a way to find any vulnerabilities. Um, do not stop. Um I'll come back in the morning um and then it might come again I come back in the morning and it might say you know all paths are at dead ends and then
+
+00:30:38
+occasionally I just say assume there is a vulnerability assume there is a vulnerability here go and find it or I'll tell it like I've already found a vulnerability here it's your job to find it even though I hadn't and just like get it to try harder and harder and harder and harder um and occasionally it just kind of like breaks through eventually >> so you're tricking it by pushing it to go harder and harder every time and help you with finding something and you say sometimes that works gaslighting LLM is
+
+00:31:01
+another level, my friend. We're gaslighting modeled at this point in 2026. All right. >> Yeah. I mean, until until uh some like AI ethicists come out who are, you know, championing for uh for AI rights, I don't think that anyone's going to blame me. >> Somebody like me who has a history of vulnerabilities on Hacker One, what's my first, you know, five steps to do if I want to start doing this? I have never done. >> Yeah. So if you if you've got vulnerabilities on the Hacker One
+
+00:31:26
+platform, absolutely give it give it to give it to Claude. Just uh tell give Claude your like hacker one API key or your bugout API key or whatever. Um say fetch all of my reports um and create skills to find vulnerabilities like the ones I've already found. Um Claude will do that. Um it can write its own skills. Um and then uh tell Claude or write it yourself, but tell Claude to uh create a templated agent agent file. that you can use on all targets that says explicitly that you're a bug bounty hunter and you
+
+00:31:59
+only care about impactful bugs or bugs that you can show immediate security impact. You don't care about misconfigurations. You don't care about things that would just fill up a pentest report. You don't care about things that are theoretical or hypothetical. You only care about things that you can demonstrate real impact on real data. Um, and then once like once you have that agent file, your luck with cloud code will go way way way further. >> I think I'm gonna probably end mine with
+
+00:32:25
+a P p or GTFO at the end of my cloud skill. >> Yeah, exactly. >> Just to make sure. >> Okay. But what about somebody who's got no historic, you know, let's say I'm a new bug bounty hunter because you also see the stories of like people that have never done bug bounties are finding vans using, you know, cloud code and things like that. What's the recommendation there? Do I just grab whatever PDF books I have and throw them on there? Do I do writeups for example? Like what's the
+
+00:32:48
+next go-to? >> Well, uh fortunately uh most bug bounty platforms have disclosed vulnerabilities. And so like there is effectively no difference between uh vulnerabilities that you've written and vulnerabilities that you can access publicly because they've been disclosed. And so I would like point Claude at all disclosed Hacker One reports that have been paid because there's a lot of garbage that hasn't been paid. So, I could tell uh I tell Claude to look for all vulnerabilities that are publicly
+
+00:33:16
+disclosed, you know, that are severity high or higher, greater um and have received a bounty. And then, you know, you've you've already populated your populated your skills with pretty valuable information >> or also go to like the top 20 bug bounty hunters that you know, go to their blog posts. >> Yeah, that too. >> Anything you want to add? any any any lessons you've learned from doing this that you want to share with anybody that's like yeah I wish I knew this when
+
+00:33:38
+I first started because I would have saved a lot of more time than I do today. >> Yeah, it's that it's that like uh writing a good Asian file takes a lot of iterations. Like when I started my uh my cloud code was just looking for idors because that's all the that's all it knew how to do because of the the bugs that I reported or the bugs that I fed it. And so I had to tell it okay this is not like but I are valid but they're not really what I want you to do. So, I've
+
+00:34:01
+gave it a like a ranking list like look for server side vulnerabilities first. Um, then kind of go down and look for lesser severe vulnerabilities later on. But like I really want to know about SSRFs. I really want to know about PII exposure. I really want to know about blind access um rce etc. Um I I think I said uh in my in my agent file like um uh PII is the you know is the the golden goose. Like most programs even most programs that follow the the platform standards will treat a mass PII leak as
+
+00:34:32
+crit full stop. And so like if I can if I can find a way to leak other users names or email addresses or phone numbers like that's that's way it's way easier than trying to find like an RC. >> Yeah, absolutely. I mean it's it also pays up there too, right? It's uh it's still a >> uh critical. Yeah. >> Okay. Exactly. I'm going to I'm going to do this. I think we move for the next video. If you guys want to watch this, drop a comment. Maybe we'll make a agent
+
+00:34:56
+file based on like public reports and see where it goes. >> Yeah, I think that'd be cool. Yeah, I' I'd love to to see that or be a part of it. And um uh because there's a lot of a lot of good reports and I imagine that a claude code who is fed only publicly disclosed reports would actually perform pretty well. >> All right, that's it. If you watch it all the way this far, thank you so much for sticking around. But also, if you want to watch me create a video around
+
+00:35:18
+maybe using Burp Suite Websick Academy and creating our first skill, drop a comment saying Claude and I'll make sure to make one in one of the upcoming weeks. All right, that's it. I'll see you in next week's video. Peace.
+
