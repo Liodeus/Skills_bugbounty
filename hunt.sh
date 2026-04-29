@@ -63,7 +63,7 @@ fi
 WORKSPACE="$INVOKED_FROM/$TARGET_NAME"
 echo "🏗️  Creating workspace: $WORKSPACE"
 mkdir -p "$WORKSPACE"
-cp "$MASTER_CLAUDE_MD" "$WORKSPACE/Claude.md"
+cp "$MASTER_CLAUDE_MD" "$WORKSPACE/CLAUDE.md"
 
 # 5. Finalize
 cd "$WORKSPACE" || exit
