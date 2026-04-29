@@ -55,6 +55,34 @@ Spend tokens in this order. Always.
 
 Start from what's given. Do not branch out into adjacent domains, parent domains, sibling subdomains, or "while we're here let's enum" territory. If the target URL is `https://app.target.com/dashboard`, stay on `app.target.com` and the APIs it calls.
 
+### Tooling: Caido MCP
+
+A **Caido MCP server** (`c0tton-fluff/caido-mcp-server`) is configured in the harness. When tools matching `mcp__*caido*` are loaded in the session, **prefer them over curl / asking the user for raw HTTP** — Caido is both the read surface and the action surface.
+
+**Read** — what's already in the project:
+* Pull captured requests/responses for the target host directly from the active Caido project
+* Read the project's scope as ground truth before testing
+* Inspect replay history to avoid re-treading paths already tried
+* Use Caido as the source of truth for "what's been seen" in this engagement
+
+**Act** — drive Caido to test:
+* Replay captured requests with mutations (modified params, swapped session tokens, removed auth headers, changed verbs) to test IDOR / RBAC / auth bypass / parameter pollution
+* Send arbitrary new requests through Caido so they land in the project history — not lost to ephemeral curl
+* Lean on Caido's session/auth context — replays carry the right cookies/tokens automatically, no manual auth-juggling
+* Keep all testing inside the Caido project so fires, replays, and findings stay correlated for the eventual report
+
+### Tooling: Playwright MCP (browser automation through Caido)
+
+A **Playwright MCP server** (`Vozec/playwright-pwnchrome`) is configured. The browser routes traffic through Caido, so every browser request lands in the active Caido project automatically. When tools matching `mcp__*playwright*` / `mcp__*pwnchrome*` are loaded:
+* **Log in to JS-heavy SPAs** that won't work with raw HTTP replay — modern auth flows, OAuth dances, MFA prompts
+* **Walk the app as a real user** — clicking, form-filling, navigation. Phase 3 (app walkthrough) becomes something *you* do, not something you delegate back to Liodeus
+* **Trigger client-side flows** that reveal hidden endpoints — lazy-loaded routes, role-gated UI, dynamic feature flags only loaded after specific UI actions
+* **Test DOM XSS** by actually rendering the page and observing execution
+* **Capture screenshots** for PoC artifacts in reports
+* **Inspect the live JS environment** — `window` globals, runtime config, loaded chunks
+
+**Pairing rule:** Playwright drives the browser, Caido captures and replays. Don't `curl` a SPA that needs JS to render — drive the browser. Don't replay-mutate a request whose tokens were minted by a JS flow without first running that flow through Playwright. If the MCP isn't loaded, ask Liodeus to enable it (`/mcp`).
+
 ### Phase 1: Anchor on the given input
 1. Hit the URL with the provided credentials / session. Confirm you're authenticated and seeing what a real user sees.
 2. If a raw request was provided, replay it as-is first — confirm it works — then start mutating from there.
@@ -77,9 +105,9 @@ For the given URL and the APIs it calls:
 **Always mine, mine, mine, probe.** This is where real bugs hide. Generic crawling stops at the front page.
 
 ### Phase 3: App walkthrough as a real user
-1. With the provided creds, walk every feature in the app with proxy intercept on (Burp / Caido).
-2. Build an inventory: every endpoint, every parameter, every ID format, every auth state.
-3. Sign up / request a **second account** from the user if multi-tenancy / per-user data is involved — needed for IDOR/RBAC testing without touching real users. **Do not self-create accounts unless the user has confirmed signup is in scope.**
+1. Drive Playwright with the provided creds — browser proxies through Caido automatically. If Playwright isn't loaded, ask Liodeus to walk the app while intercepting in Caido.
+2. Build an inventory from Caido's captured requests: every endpoint, every parameter, every ID format, every auth state.
+3. Sign up / request a **second account** from Liodeus if multi-tenancy / per-user data is involved — needed for IDOR/RBAC testing without touching real users. **Do not self-create accounts unless Liodeus has confirmed signup is in scope.**
 
 ### Phase 4: Per-feature deep dive
 For each feature, ask:
@@ -168,6 +196,7 @@ The `Skills_bugbounty/` directory contains targeted methodologies. Invoke the re
 * `/hunt-sql` — SQL / NoSQL injection
 * `/hunt-ssti` — server-side template injection
 * `/hunt-ffuf` — fuzzing patterns and calibration
+* `/waf-bypass` — WAF detection & evasion (technique, must chain with an underlying vuln)
 * `/write-report-yeswehack` — report writing for YesWeHack
 
 When a relevant skill exists, use it instead of reasoning from scratch.

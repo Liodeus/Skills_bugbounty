@@ -104,18 +104,9 @@ seq -w 0001 9999 > padded_ids.txt
 | Dev/Staging | `-rate 50 -t 40` | 40 | Fast |
 | Local/Testing | No limit | 100+ | Maximum speed |
 
-## Installing SecLists
+## SecLists Location
 
-```bash
-# Clone the repository
-git clone https://github.com/danielmiessler/SecLists.git /opt/SecLists
-
-# Or install via package manager (Kali)
-sudo apt install seclists
-
-# Then reference in ffuf:
-ffuf -w /opt/SecLists/Discovery/Web-Content/common.txt -u https://target.com/FUZZ -ac
-```
+SecLists is installed at **`/opt/SecLists`**. All wordlist paths in this document are relative to that root — prefix with `/opt/SecLists/` when passing to `ffuf -w`.
 
 ## Quick Reference: Common ffuf Patterns
 
