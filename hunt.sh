@@ -39,7 +39,7 @@ echo "🚀 Starting automated hunt for: $TARGET_NAME"
 # 2. Launch Caido (reuse if already up)
 if ! lsof -i:8080 -t >/dev/null; then
     echo "🌐 Launching Caido instance..."
-    nohup caido > /tmp/caido.log 2>&1 &
+    nohup /home/liodeus/Applications/caido-desktop-v0.56.0-linux-x86_64_703859cb772775dc3a128ae0be4eb186.AppImage > /tmp/caido.log 2>&1 &
     wait_for_port 8080 30 || { echo "❌ Caido failed to start (see /tmp/caido.log)"; exit 1; }
 else
     echo "✅ Caido already on :8080 — reusing"

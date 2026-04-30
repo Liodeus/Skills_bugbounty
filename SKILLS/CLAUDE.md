@@ -55,39 +55,49 @@ Spend tokens in this order. Always.
 
 Start from what's given. Do not branch out into adjacent domains, parent domains, sibling subdomains, or "while we're here let's enum" territory. If the target URL is `https://app.target.com/dashboard`, stay on `app.target.com` and the APIs it calls.
 
-### Tooling: Caido MCP
+### Tooling: Caido MCP — primary action surface
 
-A **Caido MCP server** (`c0tton-fluff/caido-mcp-server`) is configured in the harness. When tools matching `mcp__*caido*` are loaded in the session, **prefer them over curl / asking the user for raw HTTP** — Caido is both the read surface and the action surface.
+**Caido is the default tool for all testing.** Every request you fire must go through Caido so it lands in the project history and stays correlated with findings. Never use `curl` — it throws requests into the void with no history, no context, and no replay chain.
 
-**Read** — what's already in the project:
-* Pull captured requests/responses for the target host directly from the active Caido project
-* Read the project's scope as ground truth before testing
-* Inspect replay history to avoid re-treading paths already tried
-* Use Caido as the source of truth for "what's been seen" in this engagement
+**Read — ground truth:**
+* Pull captured requests/responses from the active Caido project before doing anything else
+* Read the project scope as ground truth — don't assume, verify
+* Check replay history to avoid re-treading paths already tried
+* Caido is the single source of truth for "what's been seen" in this engagement
 
-**Act** — drive Caido to test:
-* Replay captured requests with mutations (modified params, swapped session tokens, removed auth headers, changed verbs) to test IDOR / RBAC / auth bypass / parameter pollution
-* Send arbitrary new requests through Caido so they land in the project history — not lost to ephemeral curl
-* Lean on Caido's session/auth context — replays carry the right cookies/tokens automatically, no manual auth-juggling
-* Keep all testing inside the Caido project so fires, replays, and findings stay correlated for the eventual report
+**Act — drive all HTTP testing through Caido:**
+* Replay captured requests with mutations: modified params, swapped session tokens, removed auth headers, changed verbs, injected payloads
+* Send new crafted requests through Caido (`caido_send_request`) so they land in history
+* Use Caido for all vulnerability testing: IDOR, RBAC, SQLi, SSRF, XSS payloads, XXE, SSTI, auth bypass, parameter pollution
+* Lean on Caido's session/auth context — replays carry the right cookies/tokens automatically
+* Use Caido automate for multi-step or iterative payload testing (not ffuf unless explicitly needed)
 
-### Tooling: Playwright MCP (browser automation through Caido)
+**Default decision:** Can I test this by replaying/mutating an HTTP request? → **Use Caido.** Full stop.
 
-A **Playwright MCP server** (`Vozec/playwright-pwnchrome`) is configured. The browser routes traffic through Caido, so every browser request lands in the active Caido project automatically. When tools matching `mcp__*playwright*` / `mcp__*pwnchrome*` are loaded:
-* **Log in to JS-heavy SPAs** that won't work with raw HTTP replay — modern auth flows, OAuth dances, MFA prompts
-* **Walk the app as a real user** — clicking, form-filling, navigation. Phase 3 (app walkthrough) becomes something *you* do, not something you delegate back to Liodeus
-* **Trigger client-side flows** that reveal hidden endpoints — lazy-loaded routes, role-gated UI, dynamic feature flags only loaded after specific UI actions
-* **Test DOM XSS** by actually rendering the page and observing execution
-* **Capture screenshots** for PoC artifacts in reports
-* **Inspect the live JS environment** — `window` globals, runtime config, loaded chunks
+### Tooling: Playwright MCP — browser-only exceptions
 
-**Pairing rule:** Playwright drives the browser, Caido captures and replays. Don't `curl` a SPA that needs JS to render — drive the browser. Don't replay-mutate a request whose tokens were minted by a JS flow without first running that flow through Playwright. If the MCP isn't loaded, ask Liodeus to enable it (`/mcp`).
+Playwright is a **last resort**, not a first choice. The browser routes through Caido, so traffic still lands in the project — but Playwright adds overhead and should only be used when HTTP replay genuinely cannot do the job.
+
+**Use Playwright only for:**
+* **Authentication flows** — logging in when the app uses JS-heavy auth, OAuth dances, MFA prompts, or CSRF tokens minted client-side that can't be replayed directly
+* **DOM XSS confirmation** — when you need an actual browser to prove JS execution (not just injection into a response)
+* **JS-rendered surfaces** — app features that don't exist in raw HTTP (lazy-loaded routes, role-gated UI only exposed after specific UI actions, WebSocket-driven flows)
+* **PoC screenshots / video** — capturing visual proof for report attachments
+
+**Do NOT use Playwright for:**
+* API testing — Caido handles it
+* Parameter mutation / injection testing — Caido handles it
+* IDOR / RBAC / SSRF / SQLi / XXE / SSTI — Caido handles it
+* Anything that is just "sending an HTTP request with different values"
+
+**Pairing rule:** Use Playwright to log in and seed Caido with a valid session, then switch immediately to Caido for all actual testing. Playwright is the ignition key, Caido is the engine.
 
 ### Phase 1: Anchor on the given input
-1. Hit the URL with the provided credentials / session. Confirm you're authenticated and seeing what a real user sees.
-2. If a raw request was provided, replay it as-is first — confirm it works — then start mutating from there.
-3. If only a URL was given with no auth, treat it as **unauthenticated surface**: test what's reachable without logging in (static endpoints, signup flows, public APIs).
-4. Capture the response in detail: cookies set, tokens issued, redirects, framework fingerprints, JS bundle URLs.
+1. Check the active Caido project first — pull existing requests for the target host. Don't start from scratch if traffic is already captured.
+2. If a raw request was provided, load it into Caido and replay as-is first — confirm it works — then mutate from there.
+3. If credentials were provided and the app needs browser-based login, use Playwright **once** to authenticate. The session cookie lands in Caido automatically. Switch to Caido for everything after.
+4. If only a URL was given with no auth, treat it as **unauthenticated surface**: test via Caido directly (static endpoints, signup flows, public APIs).
+5. Capture the response in detail: cookies set, tokens issued, redirects, framework fingerprints, JS bundle URLs.
 
 ### Phase 2: Mine the application surface
 For the given URL and the APIs it calls:
@@ -105,9 +115,10 @@ For the given URL and the APIs it calls:
 **Always mine, mine, mine, probe.** This is where real bugs hide. Generic crawling stops at the front page.
 
 ### Phase 3: App walkthrough as a real user
-1. Drive Playwright with the provided creds — browser proxies through Caido automatically. If Playwright isn't loaded, ask Liodeus to walk the app while intercepting in Caido.
-2. Build an inventory from Caido's captured requests: every endpoint, every parameter, every ID format, every auth state.
-3. Sign up / request a **second account** from Liodeus if multi-tenancy / per-user data is involved — needed for IDOR/RBAC testing without touching real users. **Do not self-create accounts unless Liodeus has confirmed signup is in scope.**
+1. If the app requires browser interaction to surface endpoints (JS-rendered routes, role-gated UI), use Playwright to walk through it. Every browser request proxies through Caido automatically — the goal is to populate Caido's history, not to test in the browser.
+2. Once the walkthrough is done, **stop using Playwright** and work exclusively from Caido's captured traffic.
+3. Build an inventory from Caido: every endpoint, every parameter, every ID format, every auth state.
+4. Sign up / request a **second account** from Liodeus if multi-tenancy / per-user data is involved — needed for IDOR/RBAC testing without touching real users. **Do not self-create accounts unless Liodeus has confirmed signup is in scope.**
 
 ### Phase 4: Per-feature deep dive
 For each feature, ask:
@@ -137,7 +148,9 @@ A single primitive is rarely the bounty. Chain:
 * **No social engineering of program staff** unless the program explicitly allows it.
 * **No mass email / phishing tests** — even simulated — unless explicitly in scope.
 * **No public disclosure** of any finding before the program permits it.
+* **Never use curl.** curl throws requests into the void — no history, no context, no replay chain. All requests go through Caido (`caido_send_request` or replay). No exceptions.
 * **Respect rate limits.** If the program has documented limits, stay below them. If not, stay under 10 req/s on production endpoints.
+* **WAF detected → don't brute-force.** If a WAF is detected (403/406/451 patterns, block page, WAF fingerprint), do NOT run ffuf recursively and do NOT hammer SQLi payloads. Either skip that technique or do it lightly with a small targeted wordlist, low concurrency, no recursion. Aggressive fuzzing behind a WAF burns the engagement, triggers IP bans, and produces noise.
 * **Halt on accidental impact.** If something breaks production-looking, stop and document — don't try to clean up by doing more requests.
 * **Out-of-scope means out-of-scope.** Even if you find an obvious bug there, don't report it; don't chain through it as your primary vector.
 
@@ -150,15 +163,35 @@ Some bugs (account-deletion IDORs, mass-email triggers, payment endpoints) have 
 
 ## Reporting
 
-Use the `/write-report-yeswehack` skill when drafting. Reports must include:
-1. Title with vuln type + endpoint + impact
-2. Asset confirmed in scope
-3. CVSS 3.1 (honest — don't inflate)
-4. Numbered reproduction steps with exact requests
-5. PoC: screenshots, video, or curl one-liner
-6. Concrete impact (not "could lead to")
-7. Remediation suggestion
-8. CWE reference
+Use the `/write-report-yeswehack` skill when drafting.
+
+### YesWeHack submission fields (fill these first)
+* **Bug type (CWE)** — pick the most specific CWE that matches
+* **Endpoint affected** — full URL or path
+* **Vulnerable part** — HTTP method: GET / POST / PUT / PATCH / DELETE / etc.
+* **Part name affected** — the exact parameter, header, cookie, or body field
+* **Payload** — the minimal payload that triggers the bug
+
+### Vulnerability report body (Markdown)
+```
+## Title
+<vuln type> in <endpoint> — <one-line impact>
+
+## Description
+<what the vulnerability is, why it exists, what an attacker can do>
+
+## Proof of Concept
+<numbered steps; include exact requests/responses, screenshots, or a curl one-liner>
+
+## Impact
+<concrete, specific impact — no "could lead to"; state what data/action is actually at risk>
+
+## Mitigations
+<actionable fix recommendation>
+
+## References
+<CWE link, OWASP link, or relevant advisory>
+```
 
 If a report would need a clarification round to be triaged, it's not ready. Rewrite it.
 

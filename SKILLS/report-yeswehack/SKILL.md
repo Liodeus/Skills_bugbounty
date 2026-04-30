@@ -19,26 +19,69 @@ If a report needs a clarification round, you wrote it wrong.
 
 ## Report Structure (YesWeHack)
 
-YesWeHack's submission form has these fields. Fill each precisely:
+A YesWeHack submission has two parts: **the form fields** (metadata) and **the report body** (Markdown).
 
-### 1. Title
-Format: `[Vulnerability type] in [feature/endpoint] allows [impact]`
+---
+
+### Part 1 — Submission form fields
+
+Fill these fields in the YesWeHack submission UI:
+
+| Field | What to put |
+|---|---|
+| **Bug type (CWE)** | Most specific CWE — e.g. `CWE-89: SQL Injection`, `CWE-79: XSS`, `CWE-639: IDOR` |
+| **Endpoint affected** | Full URL or path — e.g. `https://app.target.com/api/v1/orders/{id}` |
+| **Vulnerable part** | HTTP method — `GET` / `POST` / `PUT` / `PATCH` / `DELETE` / etc. |
+| **Part name affected** | Exact parameter, header, cookie, or body field — e.g. `id`, `redirect_url`, `X-User-Id`, `search` |
+| **Payload** | Minimal payload that triggers the bug — e.g. `' OR 1=1--`, `<img src=x onerror=alert(1)>`, `../../../etc/passwd` |
+
+---
+
+### Part 2 — Vulnerability report body (Markdown)
+
+```markdown
+## Title
+[Vulnerability type] in [feature/endpoint] — [one-line impact]
 
 Examples:
-* `[Reflected XSS] in /search endpoint allows session hijack via document.cookie exfiltration`
-* `[IDOR] on PATCH /api/v1/orders/{id} allows arbitrary order modification cross-tenant`
-* `[SSRF] in PDF export feature allows AWS metadata access and IAM credential theft`
+- [IDOR] on PATCH /api/v1/orders/{id} — allows cross-tenant order modification
+- [Reflected XSS] in /search — allows session hijack via cookie exfiltration
+- [SSRF] in PDF export — allows AWS metadata access and IAM credential theft
 
-Avoid: vague titles, vendor-name-only titles, missing impact clause.
+## Description of vulnerability
+[2-3 sentences: what the bug is, why it exists, what an attacker can do with it]
 
-### 2. Scope
-Confirm asset is in program scope. Format:
-> **Scope:** `https://app.target.com` — listed in program scope as "Main application" (asset ID: 12345 if visible)
+## Proof of Concept
+[Numbered steps. Use code blocks for requests. Include expected vs actual result.]
 
-Add CWE: e.g. `CWE-79: Cross-site Scripting (Reflected)`.
+**Preconditions:** [accounts, setup required]
 
-### 3. Severity / CVSS
-Use CVSS 3.1 (or 4.0 if program uses it). Be honest:
+1. [Step with exact request]
+2. [Step with response observed]
+...
+
+**Expected:** [what should happen]
+**Actual:** [what happens]
+
+[Screenshots, curl one-liner, or video link]
+
+## Impact
+[Concrete consequences — not "could lead to". State what data/actions are actually at risk and at what scale.]
+
+## Mitigations
+[Specific, actionable fix. Reference the exact check/query/control that is missing.]
+
+## References
+- [CWE link]
+- [OWASP reference]
+- [Relevant advisory or hacktivity if applicable]
+```
+
+---
+
+### Severity / CVSS
+
+Use CVSS 3.1 (or 4.0 if the program uses it). Be honest — triagers will downgrade inflation.
 
 | Vector | Score | Severity |
 |---|---|---|
@@ -48,88 +91,10 @@ Use CVSS 3.1 (or 4.0 if program uses it). Be honest:
 | AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N | 6.5 | Medium |
 | AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:N/A:N | 4.3 | Medium |
 
-Tips:
-* `UI:R` (User Interaction Required) drops self-XSS / clickjacking-required by ~2 points — be honest about this
-* `S:C` (Scope: Changed) means impact crosses security boundary (e.g., XSS that affects another tenant) — only use when justified
-* `PR:N` only if truly unauthenticated — most bugs are PR:L
-* Always justify your CVSS in 1 sentence: "AV:N because exploitable over the internet, PR:N because no auth required, UI:N because no victim interaction."
-
-### 4. Description
-2-3 sentences. What is the bug, in plain language.
-
-> The `/api/v1/orders/{id}` endpoint accepts PATCH requests but does not verify that the authenticated user owns the order specified in the path. This allows any authenticated user to modify orders belonging to other users, including changing the shipping address and order contents.
-
-### 5. Steps to Reproduce
-Numbered, exact. Use code blocks for requests. Include:
-* Required preconditions (have an account, log in, etc.)
-* Exact requests with full headers (redact your session token if you want; triager will re-create)
-* Expected vs actual response
-
-Template:
-```
-**Preconditions:**
-- Two accounts: Account A (attacker, ID: 100) and Account B (victim, ID: 200)
-- Account B has order ID 5000 with shipping address "123 Victim St"
-
-**Steps:**
-1. Log in as Account A. Capture session cookie.
-2. As Account A, send the following request:
-   ```http
-   PATCH /api/v1/orders/5000 HTTP/2
-   Host: app.target.com
-   Cookie: session=<account_A_session>
-   Content-Type: application/json
-   
-   {"shipping_address": "1 Attacker Lane"}
-   ```
-3. Server responds 200 OK.
-4. Log in as Account B, navigate to /orders/5000 — shipping address now shows "1 Attacker Lane".
-
-**Expected:** 403 Forbidden — Account A does not own order 5000.
-**Actual:** 200 OK, modification succeeds.
-```
-
-### 6. Proof of Concept
-Include:
-* Screenshots: before, the request, the response, after (4 images max)
-* Video if the bug is dynamic / multi-step (Loom unlisted, or attached MP4)
-* Curl command for instant repro
-* Any necessary scripts (sqlmap one-liner, custom Python snippet — keep brief)
-
-```bash
-curl -X PATCH https://app.target.com/api/v1/orders/5000 \
-  -H "Cookie: session=..." \
-  -H "Content-Type: application/json" \
-  -d '{"shipping_address":"1 Attacker Lane"}'
-```
-
-### 7. Impact
-Concrete consequences. Not "this could lead to" — what it actually does.
-
-> **Impact:**
-> - Any authenticated user can modify any other user's order, including:
->   - Shipping address (allows physical product theft)
->   - Order contents (allows financial fraud — replace expensive items with cheap ones, return for refund)
->   - Order status (e.g., mark another user's order as cancelled)
-> - Affects all ~N orders in the system (sequential IDs verified up to 5005).
-> - No rate limiting on PATCH endpoint — exploitation can be automated at scale.
-
-### 8. Remediation Suggestion
-Brief, specific. Triagers appreciate this — it shows you understand the bug.
-
-> **Remediation:**
-> Add an ownership check in the PATCH `/api/v1/orders/{id}` handler: verify that `order.user_id == current_user.id` (or that the user has admin privileges) before applying any modification. Alternatively, scope the SQL update query: `UPDATE orders SET ... WHERE id = ? AND user_id = ?`.
-
-### 9. References
-* CWE link: `https://cwe.mitre.org/data/definitions/639.html`
-* OWASP guide if relevant: `https://owasp.org/www-project-api-security/`
-* If similar public bug: link a HackerOne / YesWeHack hacktivity report
-
-### 10. Attachments
-* Screenshots (PNG, named: `01-victim-order-before.png`, `02-attacker-request.png`, etc.)
-* Video (MP4, ≤ 30s ideally, narrated or annotated)
-* Burp/Caido session export if helpful
-* Any scripts (`.py`, `.sh`)
+* `UI:R` — requires victim action (clicks link etc.) — drops score ~2 points, be honest
+* `S:C` — impact crosses security boundary (cross-tenant) — only when justified
+* `PR:N` — only if truly unauthenticated
+* Always justify in 1 sentence: "PR:N because no auth required, UI:N because no victim interaction needed."
 
 ## Severity Calibration on YesWeHack
 
@@ -171,40 +136,48 @@ YesWeHack uses CVSS 3.1 / 4.0 with program-specific overrides. General rules:
 
 ## Template (paste into YesWeHack)
 
+**Form fields (UI):**
+```
+Bug type (CWE):         CWE-XXX: <name>
+Endpoint affected:      https://target.com/path/to/endpoint
+Vulnerable part:        GET / POST / PUT / PATCH / DELETE
+Part name affected:     <parameter / header / cookie / body field>
+Payload:                <minimal reproducing payload>
+```
+
+**Report body (Markdown):**
 ```markdown
-## Summary
-[1-2 sentences: what the bug is and what it allows]
+## Title
+[Vulnerability type] in [endpoint] — [one-line impact]
 
-## Scope
-- **Asset:** [URL/asset, link to scope]
-- **CWE:** [CWE-XXX: name]
-
-## Severity
-- **CVSS 3.1:** [score] ([vector])
-- **Justification:** [1 sentence]
-
-## Steps to Reproduce
-**Preconditions:** [accounts, setup]
-
-1. [Step 1 with request]
-2. [Step 2 with response]
-...
-
-**Expected:** [what should happen]
-**Actual:** [what happens]
+## Description of vulnerability
+[2-3 sentences: what the bug is, why it exists, what an attacker achieves]
 
 ## Proof of Concept
-[Screenshots, video link, curl]
+**Preconditions:** [accounts, setup]
+
+1. [Step with exact request]
+2. [Step with observed response]
+
+**Expected:** [correct behavior]
+**Actual:** [buggy behavior]
+
+```http
+[Exact HTTP request]
+```
+
+[Screenshot / curl / video link]
 
 ## Impact
-[Concrete consequences, scale, exploitability]
+[Concrete consequences — no "could lead to". What data or actions are at risk, at what scale.]
 
-## Remediation
-[Specific fix suggestion]
+## Mitigations
+[Specific fix — exact check, query clause, or control that is missing]
 
 ## References
-- [CWE link]
-- [Other refs]
+- https://cwe.mitre.org/data/definitions/XXX.html
+- [OWASP reference if relevant]
+- [Hacktivity reference if relevant]
 ```
 
 ## Key Considerations

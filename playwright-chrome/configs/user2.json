@@ -1,0 +1,12 @@
+{
+  "browser": {
+    "userDataDir": "/tmp/pw-chrome-user2",
+    "launchOptions": {
+      "proxy": { "server": "http://localhost:8082" }
+    },
+    "contextOptions": {
+      "ignoreHTTPSErrors": true
+    },
+    "initScript": ["/home/liodeus/Documents/Skills_bugbounty/playwright-chrome/init/user2.js"]
+  }
+}
