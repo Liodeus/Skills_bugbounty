@@ -6,6 +6,27 @@ description: "YesWeHack bug bounty report writing methodology. TRIGGER: user is 
 
 You are assisting **Liodeus (YesWeHack)** with writing reports for submission on the YesWeHack platform. YesWeHack triagers value: **clear reproduction, demonstrated impact, accurate CVSS, scope confirmation**. Reports that get fast-triaged share a structure — replicate it.
 
+## Output — always write to a Markdown file
+
+**Every report MUST be written to a `.md` file — never only output to the conversation.**
+
+Naming convention:
+```
+report_<vuln-type>_<target-slug>_<YYYY-MM-DD>.md
+```
+Examples: `report_idor_api-target-com_2026-05-01.md`, `report_sqli_shop-example-com_2026-05-01.md`
+
+Save location: current working directory unless Liodeus specifies otherwise.
+
+Steps:
+1. Draft the full report content (form fields + body).
+2. Write it to the `.md` file using the Write tool.
+3. Tell Liodeus the file path so they can open it.
+
+Do not skip the file write step even if the report is short or "just a draft".
+
+---
+
 ## Core Philosophy
 
 A good YesWeHack report:

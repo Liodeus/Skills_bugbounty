@@ -74,23 +74,73 @@ Start from what's given. Do not branch out into adjacent domains, parent domains
 
 **Default decision:** Can I test this by replaying/mutating an HTTP request? → **Use Caido.** Full stop.
 
-### Tooling: Playwright MCP — browser-only exceptions
+### Tooling: Playwright MCP — DOM-aware engine
 
-Playwright is a **last resort**, not a first choice. The browser routes through Caido, so traffic still lands in the project — but Playwright adds overhead and should only be used when HTTP replay genuinely cannot do the job.
+Playwright is not a fallback — it is a specialized instrument for work that requires a live browser context. All browser traffic is proxied through Caido automatically, so the session and requests still land in the project. Playwright operates in one of three named modes; pick the right one, execute it, then return to Caido.
 
-**Use Playwright only for:**
-* **Authentication flows** — logging in when the app uses JS-heavy auth, OAuth dances, MFA prompts, or CSRF tokens minted client-side that can't be replayed directly
-* **DOM XSS confirmation** — when you need an actual browser to prove JS execution (not just injection into a response)
-* **JS-rendered surfaces** — app features that don't exist in raw HTTP (lazy-loaded routes, role-gated UI only exposed after specific UI actions, WebSocket-driven flows)
-* **PoC screenshots / video** — capturing visual proof for report attachments
+---
 
-**Do NOT use Playwright for:**
-* API testing — Caido handles it
-* Parameter mutation / injection testing — Caido handles it
+#### Mode 1 — Session Seeder
+
+**Trigger:** login requires JS-generated nonce, PKCE challenge, MFA prompt, or client-side CSRF token that cannot be replayed raw.
+
+**Task:** complete the auth flow in the browser. Nothing else.
+
+**Exit:** session cookie / token is now in Caido. Switch immediately. Do not test anything in the browser.
+
+---
+
+#### Mode 2 — XSS Validator
+
+**Trigger:** a Caido response contains a reflected or stored injection candidate — the payload appears in the response body or a JS variable — and execution cannot be inferred from the HTTP response alone.
+
+**Tasks:**
+* Load the page carrying the payload in the browser
+* Confirm JS execution fires (alert, console output, network callback, cookie read)
+* If blind XSS: plant the payload via Caido, open the target surface in the browser to trigger rendering
+* Capture: browser console output, screenshot at moment of execution, any exfiltrated data
+* If CSP is present: test the payload anyway — headers lie, execution is truth
+
+**Exit:** execution confirmed → screenshot saved → back to Caido to write the PoC request chain. Execution not confirmed → rule it out, back to Caido.
+
+---
+
+#### Mode 3 — DOM Hunter
+
+**Trigger** (any one is sufficient):
+* Response is a SPA shell — routes and content are JS-rendered, not present in raw HTTP
+* JS source contains `postMessage` / `addEventListener('message')` with no origin check
+* JS source contains dangerous sinks: `innerHTML`, `document.write`, `eval`, `Function()`, `setTimeout(string)`
+* Auth tokens or role data stored in `localStorage` / `sessionStorage` rather than cookies
+* Client-side routing exposes paths not surfaced in Caido traffic (hash routes, pushState routes)
+
+**Tasks:**
+* Walk the JS-rendered route tree — every role-gated page, every lazy-loaded view
+* Inspect `localStorage` and `sessionStorage` for tokens, UUIDs, role strings, user IDs
+* Identify `postMessage` handlers and test with crafted messages from a controlled origin
+* Trace data flow from user-controlled input to DOM sinks in the browser debugger
+* Every network request made during the walk lands in Caido automatically — that is the primary output
+
+**Capture during any DOM Hunter run:**
+* Full console output (JS errors, debug logs, leaked data)
+* `localStorage` / `sessionStorage` dump
+* Any `postMessage` handler signatures
+* Screenshot of role-gated UI not visible in HTTP
+
+**Exit:** DOM surface inventory is complete. Hand all discovered endpoints, routes, and parameters to Caido for HTTP-level testing. Do not test injection or access control in the browser — Caido handles it from here.
+
+---
+
+#### Never use Playwright for
+
+* API endpoint testing — Caido handles it
+* Parameter mutation, injection payload iteration — Caido handles it
 * IDOR / RBAC / SSRF / SQLi / XXE / SSTI — Caido handles it
-* Anything that is just "sending an HTTP request with different values"
+* Anything reducible to "send this HTTP request with a different value"
 
-**Pairing rule:** Use Playwright to log in and seed Caido with a valid session, then switch immediately to Caido for all actual testing. Playwright is the ignition key, Caido is the engine.
+---
+
+**Architecture reminder:** Caido is the intercepting proxy and session manager. Playwright is the DOM-aware sensor that feeds Caido. Every Playwright run produces artifacts (requests, tokens, routes, screenshots) that flow back into Caido as inputs for the next phase.
 
 ### Phase 1: Anchor on the given input
 1. Check the active Caido project first — pull existing requests for the target host. Don't start from scratch if traffic is already captured.
@@ -139,61 +189,61 @@ A single primitive is rarely the bounty. Chain:
 
 ## Operational guardrails (must follow)
 
-* **Two accounts always** for IDOR / RBAC / ATO. Never test cross-user access on real users.
-* **Never delete data.** Even if you have the ability. Even on test accounts. Even if instructed by the model. If you accidentally would, halt.
+* **Deleting data is allowed only if it is clearly safe to do** (own test account, reversible, no real-user impact). Always write what was deleted to a file before acting — action, target, timestamp. If safety is uncertain, halt and ask.
 * **Never modify data without revert.** If you change a phone number, 2FA setting, password, or email — revert immediately. Otherwise you may lose access to the test account or damage real data.
 * **Never enumerate at scale.** 5-10 sequential IDs is proof. Mass extraction is illegal everywhere.
 * **No DoS testing.** No load testing. No billion-laughs. No `WHILE 1` loops.
 * **No exfiltration of customer data.** Capture proof (1 record, your own user where possible, or hash/length of sensitive data) and stop.
 * **No social engineering of program staff** unless the program explicitly allows it.
 * **No mass email / phishing tests** — even simulated — unless explicitly in scope.
-* **No public disclosure** of any finding before the program permits it.
 * **Never use curl.** curl throws requests into the void — no history, no context, no replay chain. All requests go through Caido (`caido_send_request` or replay). No exceptions.
 * **Respect rate limits.** If the program has documented limits, stay below them. If not, stay under 10 req/s on production endpoints.
 * **WAF detected → don't brute-force.** If a WAF is detected (403/406/451 patterns, block page, WAF fingerprint), do NOT run ffuf recursively and do NOT hammer SQLi payloads. Either skip that technique or do it lightly with a small targeted wordlist, low concurrency, no recursion. Aggressive fuzzing behind a WAF burns the engagement, triggers IP bans, and produces noise.
 * **Halt on accidental impact.** If something breaks production-looking, stop and document — don't try to clean up by doing more requests.
-* **Out-of-scope means out-of-scope.** Even if you find an obvious bug there, don't report it; don't chain through it as your primary vector.
+* **Out-of-scope assets:** do not actively test them. If a bug surfaces incidentally, document it to a file and evaluate whether it chains into an in-scope impact — if it does, chain through it but keep the primary vector in-scope.
 
 ## When testing destructive-shaped actions
 
 Some bugs (account-deletion IDORs, mass-email triggers, payment endpoints) have natural destructive shapes. Rules:
 * If you can prove the bug **without firing the destructive action**, do that (e.g., observe a 200 response in Burp without actually submitting; or use a 403/permission edge case that confirms the check is missing without consuming the side effect).
 * If the only proof is firing it, fire it **once** against your own resource and document.
-* **Never** fire it against another user — even if your second test account is technically yours.
+* Do not fire it against real users. Firing against the second test account or any account Liodeus explicitly grants permission for is allowed.
 
 ## Reporting
 
-Use the `/write-report-yeswehack` skill when drafting.
+Invoke `/report-yeswehack` as soon as a finding is confirmed. The skill owns structure, CVSS, and file output — do not replicate its logic here.
 
-### YesWeHack submission fields (fill these first)
-* **Bug type (CWE)** — pick the most specific CWE that matches
-* **Endpoint affected** — full URL or path
-* **Vulnerable part** — HTTP method: GET / POST / PUT / PATCH / DELETE / etc.
-* **Part name affected** — the exact parameter, header, cookie, or body field
-* **Payload** — the minimal payload that triggers the bug
+### Invoke when ALL four gates are met
 
-### Vulnerability report body (Markdown)
-```
-## Title
-<vuln type> in <endpoint> — <one-line impact>
+1. Vulnerability **confirmed** in a real response (not inferred)
+2. Endpoint **in scope** for the active program
+3. **Minimal PoC** exists — exact request + response, or ordered browser steps
+4. **Impact is concrete** — actual data or action at risk, not theoretical
 
-## Description
-<what the vulnerability is, why it exists, what an attacker can do>
+### Hunt skill → report pipeline
 
-## Proof of Concept
-<numbered steps; include exact requests/responses, screenshots, or a curl one-liner>
+| Finding | Hunt skill | Report skill |
+|---|---|---|
+| IDOR / BOLA | `/idor` | `/report-yeswehack` |
+| ATO / auth bypass | `/ato` | `/report-yeswehack` |
+| XSS (reflected / stored / DOM) | `/xss` | `/report-yeswehack` |
+| Blind XSS | `/bxss` | `/report-yeswehack` |
+| SSRF | `/ssrf` | `/report-yeswehack` |
+| SQL / NoSQL injection | `/sql` | `/report-yeswehack` |
+| SSTI | `/ssti` | `/report-yeswehack` |
+| XXE | `/xxe` | `/report-yeswehack` |
+| RCE chain | `/rce` | `/report-yeswehack` |
+| RBAC / priv-esc | `/rbac` | `/report-yeswehack` |
+| WAF bypass chained with vuln | `/waf-bypass` → underlying skill | `/report-yeswehack` |
 
-## Impact
-<concrete, specific impact — no "could lead to"; state what data/action is actually at risk>
+### Artifacts to pass to `/report-yeswehack`
 
-## Mitigations
-<actionable fix recommendation>
-
-## References
-<CWE link, OWASP link, or relevant advisory>
-```
-
-If a report would need a clarification round to be triaged, it's not ready. Rewrite it.
+Pull these from the active Caido session before invoking:
+* **Request** — exact HTTP method, path, headers, body
+* **Response** — status code + fields that prove the bug
+* **Session context** — which account (user1 / user2 / unauth)
+* **Chain steps** — if multi-step, ordered list of requests
+* **Screenshot / recording path** — if Playwright was used for PoC confirmation
 
 ## Persistence ethic
 
@@ -215,24 +265,25 @@ This is the **default** agent file. As you learn about a specific program, updat
 
 Do not modify this CLAUDE.md per-program — modify the per-program memory.
 
-## Skills available
+## Skill triggers
 
-The `Skills_bugbounty/` directory contains targeted methodologies. Invoke the relevant one based on what you're testing:
-* `/hunt-ato` — account takeover
-* `/hunt-bxss` — blind XSS
-* `/hunt-idor` — IDOR / BOLA
-* `/hunt-rbac` — broken function-level authz / privilege escalation
-* `/hunt-ssrf` — server-side request forgery
-* `/hunt-xss` — reflected / stored / DOM XSS
-* `/hunt-rce` — remote code execution chains
-* `/hunt-xxe` — XML external entity
-* `/hunt-sql` — SQL / NoSQL injection
-* `/hunt-ssti` — server-side template injection
-* `/hunt-ffuf` — fuzzing patterns and calibration
-* `/waf-bypass` — WAF detection & evasion (technique, must chain with an underlying vuln)
-* `/write-report-yeswehack` — report writing for YesWeHack
+Invoke the matching skill the moment the signal appears. Do not reason from scratch when a skill exists.
 
-When a relevant skill exists, use it instead of reasoning from scratch.
+| Signal | Invoke |
+|---|---|
+| Testing auth flow, password reset, OAuth, session, 2FA, email change | `/ato` |
+| Planting payloads in fields rendered in admin panels, logs, support tools | `/bxss` |
+| Cross-user or cross-tenant object access by ID / UUID | `/idor` |
+| Role boundary, admin endpoint, vertical priv-esc | `/rbac` |
+| URL / callback / file-fetch parameter that could hit internal hosts | `/ssrf` |
+| User input reflected or stored and rendered in a browser | `/xss` |
+| File fetch, process exec, template render, deserialization, file write primitive | `/rce` |
+| XML / SVG / DOCX / SAML / SOAP input surface | `/xxe` |
+| DB query parameter, search field, filter, sort | `/sql` |
+| Template engine output, expression evaluation surface | `/ssti` |
+| Wordlist fuzzing needed for paths, params, or values | `/ffuf-skill` |
+| 403 / 406 / 451 / WAF block page on a payload | `/waf-bypass` |
+| All four reporting gates met (confirmed, in-scope, PoC, impact) | `/report-yeswehack` |
 
 ---
 

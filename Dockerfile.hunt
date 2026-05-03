@@ -1,0 +1,52 @@
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── System tools ──────────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y \
+    curl wget git jq gosu unzip \
+    openssl socat \
+    python3 python3-pip python3-venv \
+    netcat-openbsd dnsutils whois \
+    ca-certificates gnupg xz-utils \
+    # Playwright / Chromium system deps
+    libasound2 libatk-bridge2.0-0 libatk1.0-0 libcups2 \
+    libdbus-1-3 libdrm2 libgbm1 libgtk-3-0 libnspr4 libnss3 \
+    libxcomposite1 libxdamage1 libxfixes3 libxkbcommon0 \
+    libxrandr2 libxss1 libxtst6 libx11-xcb1 libx11-6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── ffuf + interactsh-client (pre-built binaries, arch-aware) ─────────────────
+RUN set -e; \
+    ARCH=$(dpkg --print-architecture); \
+    # ffuf
+    curl -fsSL "https://github.com/ffuf/ffuf/releases/latest/download/ffuf_$(curl -fsSL https://api.github.com/repos/ffuf/ffuf/releases/latest | grep -o '"tag_name":"[^"]*"' | cut -d'"' -f4 | tr -d v)_linux_${ARCH}.tar.gz" \
+        | tar -xz -C /usr/local/bin ffuf; \
+    # interactsh-client
+    curl -fsSLo /tmp/isc.zip "https://github.com/projectdiscovery/interactsh/releases/latest/download/interactsh-client_linux_${ARCH}.zip"; \
+    unzip -qo /tmp/isc.zip interactsh-client -d /usr/local/bin; \
+    rm /tmp/isc.zip; \
+    chmod +x /usr/local/bin/ffuf /usr/local/bin/interactsh-client
+
+# ── isc wrapper — injects INTERACTSH_TOKEN automatically ─────────────────────
+RUN printf '#!/bin/sh\nexec interactsh-client -token "${INTERACTSH_TOKEN:-}" "$@"\n' \
+    > /usr/local/bin/isc && chmod +x /usr/local/bin/isc
+
+# ── Node.js 20 ────────────────────────────────────────────────────────────────
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Claude Code ───────────────────────────────────────────────────────────────
+RUN npm install -g @anthropic-ai/claude-code
+
+# ── Python helpers ────────────────────────────────────────────────────────────
+RUN pip3 install --break-system-packages requests httpx beautifulsoup4
+
+# ── Entrypoint: create user matching host UID/GID at runtime ─────────────────
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["claude", "--dangerously-skip-permissions"]
