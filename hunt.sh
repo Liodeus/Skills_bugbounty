@@ -2,6 +2,23 @@
 
 # --- CONFIGURATION ---
 TARGET_NAME=$1
+
+INITIAL_GOAL='Goal:
+Give me 10 priority spots to dig into in this app, ordered by
+likelihood of an exploitable vuln. For each lead:
+- The endpoint or feature involved
+- The suspected vuln type
+- Why you think it'\''s suspicious (observed pattern, abnormal behavior,
+  broken convention, etc.)
+- The fastest way to validate or rule out the lead
+
+Constraints:
+- No generic suggestions like "test for classic XSS". I want leads
+  specific to this app only.
+- Prioritize business logic bugs, access control, and complex chains.
+  Scanners already pick up the rest.
+- If you lack context on part of the app, say so rather than making
+  things up.'
 SKILLS_BASE="/home/$(whoami)/Documents/Skills_bugbounty"
 MASTER_CLAUDE_MD="$SKILLS_BASE/SKILLS/CLAUDE.md"
 BROWSER_DIR="$SKILLS_BASE/playwright-chrome"
@@ -64,6 +81,7 @@ WORKSPACE="$INVOKED_FROM/$TARGET_NAME"
 echo "🏗️  Creating workspace: $WORKSPACE"
 mkdir -p "$WORKSPACE"
 cp "$MASTER_CLAUDE_MD" "$WORKSPACE/CLAUDE.md"
+printf '%s\n' "$INITIAL_GOAL" > "$WORKSPACE/initial_goal.txt"
 
 # 5. Finalize
 cd "$WORKSPACE" || exit
@@ -71,6 +89,6 @@ echo "---"
 echo "✅ Environment Ready!"
 echo "🤖 Target: $TARGET_NAME"
 echo "📜 Agent Persona: Claude.md (Impact-Focused)"
-echo "🔥 Run: 'claude --dangerously-skip-permissions' to begin."
+echo "🔥 Run: 'claude --dangerously-skip-permissions -p \"\$(cat initial_goal.txt)\"' to begin."
 
 exec $SHELL

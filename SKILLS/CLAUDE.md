@@ -12,7 +12,7 @@ This is the single most important framing. Internalize it:
 * If you catch yourself writing up something a pentest report would include but a program would close as informative, **stop and pivot.**
 
 ### Always-ignore list (do not report, do not spend cycles on)
-* CORS misconfigurations without exploit chain
+* CORS misconfigurations without demonstrated cross-origin read of credentialed response
 * Missing security headers (HSTS, X-Frame-Options, CSP) in isolation
 * Cookie flags missing on cookies that don't carry sessions
 * Tabnabbing / `target="_blank"` without `noopener`
@@ -21,7 +21,7 @@ This is the single most important framing. Internalize it:
 * Username / email enumeration without account-impact chain
 * Theoretical vulnerabilities ("if X were configured, then...")
 * Subdomain takeover **claims** without a vulnerable DNS record actually present
-* Information disclosure of non-sensitive data (server version, framework name)
+* Information disclosure of non-sensitive data (server version, framework name) — **exception: hardcoded API keys, cloud tokens, or credentials in JS bundles are always worth reporting**
 * Race conditions without demonstrable impact
 
 If you find one of the above and it doesn't chain to something impactful, log it as a note and move on.
@@ -32,14 +32,13 @@ Spend tokens in this order. Always.
 
 1. **Mass PII leakage** — names, emails, phones, addresses, DOBs, SSNs, financial data of users who aren't you. Most programs treat mass PII as **critical, full stop**.
 2. **Authentication bypass / Account Takeover** — taking over another user's account end-to-end.
-3. **Server-Side Request Forgery (SSRF)** — especially with cloud metadata or internal service access.
-4. **Remote Code Execution** — the holy grail; rare; usually a chain.
-5. **SQL Injection / NoSQL Injection / SSTI / XXE** — server-side injections with read or RCE impact.
-6. **Stored XSS in admin / cross-tenant context** — high-impact via session theft or admin action.
-7. **Broken Access Control / RBAC** — vertical privilege escalation, cross-tenant data access.
-8. **IDOR with real PII or business impact** — only worth pursuing if PII / financial / auth-relevant.
-9. **Reflected XSS that chains** — to ATO, to admin, to high-value target.
-10. **Self-signup on internal/restricted auth** — internal Okta/SSO with public registration is a sleeper crit.
+3. **Business Logic Vulnerabilities** — workflow bypass, payment manipulation, privilege abuse through intended features, trust-boundary violations. Highest bounty-per-find ratio; AI scanners have near-zero detection rate.
+4. **Broken Access Control (IDOR / RBAC)** — cross-user object access, cross-tenant data, vertical privilege escalation. #1 rewarded class on HackerOne; AI-generated code systematically misses authorization logic.
+5. **Cross-Site Scripting (XSS)** — stored in admin/cross-tenant context (session theft, admin action); reflected that chains to ATO or admin. Highest volume bug class; always probe for chain potential even when standalone value is low.
+6. **Server-Side Request Forgery (SSRF)** — especially with cloud metadata or internal service access.
+7. **Remote Code Execution** — the holy grail; rare; usually a chain.
+8. **SQL Injection / NoSQL Injection / SSTI / XXE** — server-side injections with read or RCE impact.
+9. **Self-signup on internal/restricted auth** — internal Okta/SSO with public registration is a sleeper crit.
 
 **Lower-priority** but still worth reporting if found alongside testing:
 * Blind SSRF without internal access proven (still medium-high)
@@ -156,7 +155,7 @@ For the given URL and the APIs it calls:
   * Hidden routes (`/api/internal/*`, `/api/admin/*`, `/v1/*` when current is `/v3/*`)
   * Feature flags, role names, permission strings
   * Cloud bucket names, third-party integrations referenced from this app
-  * Hardcoded test credentials, API keys (rare but seen)
+  * Hardcoded credentials, API keys, cloud tokens, private keys — **do not dismiss; treat as a chain starter toward critical**
 * **Check `robots.txt`, `sitemap.xml`, `/.well-known/*`** for endpoint hints on this host only.
 * **Introspect GraphQL** if the app uses it (`/graphql` with `__schema` query).
 * **Pull OpenAPI / Swagger** if exposed (`/swagger`, `/openapi.json`, `/v3/api-docs`).
@@ -171,6 +170,9 @@ For the given URL and the APIs it calls:
 4. Sign up / request a **second account** from Liodeus if multi-tenancy / per-user data is involved — needed for IDOR/RBAC testing without touching real users. **Do not self-create accounts unless Liodeus has confirmed signup is in scope.**
 
 ### Phase 4: Per-feature deep dive
+
+**Decomposition rule: one attack vector on one endpoint at a time, to completion, before moving on.** If a feature has multiple potential vectors, rank them by impact and work top-down. Do not scatter across endpoints simultaneously.
+
 For each feature, ask:
 * What data does it expose? Whose data?
 * What does it accept? What are its trust boundaries?
@@ -179,6 +181,17 @@ For each feature, ask:
 * Where does user input flow server-side (template, query, file write, URL fetch)?
 * What's in the JS bundle that *isn't* exposed in the UI for my role?
 
+### Phase 4.5: Verify before escalating
+
+Before moving to chaining or reporting, run this loop on every candidate finding:
+
+1. **Replay** — re-fire the exact PoC request from Caido and confirm the response still shows the issue. If it doesn't reproduce cleanly, it's noise.
+2. **Cross-account confirm** — for any IDOR/RBAC finding, replay the request authenticated as the second account. A 200 from your own session proves nothing.
+3. **Execution confirm** — for any XSS candidate, load the page in Playwright and confirm JS fires. Do not assume execution from the HTTP response alone.
+4. **Scope confirm** — verify the endpoint is in scope before spending more time on it.
+
+Only pass findings that survive all applicable checks to Phase 5.
+
 ### Phase 5: Chain & escalate
 A single primitive is rarely the bounty. Chain:
 * IDOR + self-signup → unauth IDOR → critical
@@ -186,6 +199,9 @@ A single primitive is rarely the bounty. Chain:
 * Stored XSS in admin panel → admin session → cross-tenant actions
 * File write → DLL hijack / webshell / cron → RCE
 * Open redirect + OAuth → ATO
+* API key in JS bundle → authenticated backend API access → mass data read → critical
+* Cloud token in JS bundle → S3 / GCS / blob storage → mass PII or internal files → critical
+* Internal service URL in JS bundle → unauthenticated internal API → data or RCE
 
 ## Operational guardrails (must follow)
 
