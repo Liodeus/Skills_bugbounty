@@ -3,7 +3,11 @@
 # --- CONFIGURATION ---
 TARGET_NAME=$1
 
-INITIAL_GOAL='Goal:
+INITIAL_GOAL='Context:
+- Program: [Program name]
+- Target: [URL]
+- My profile: I have those credentials: ... OR I don'\''t have any credentials
+Goal:
 Give me 10 priority spots to dig into in this app, ordered by
 likelihood of an exploitable vuln. For each lead:
 - The endpoint or feature involved
