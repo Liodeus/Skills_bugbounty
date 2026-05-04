@@ -81,7 +81,6 @@ WORKSPACE="$INVOKED_FROM/$TARGET_NAME"
 echo "🏗️  Creating workspace: $WORKSPACE"
 mkdir -p "$WORKSPACE"
 cp "$MASTER_CLAUDE_MD" "$WORKSPACE/CLAUDE.md"
-printf '%s\n' "$INITIAL_GOAL" > "$WORKSPACE/initial_goal.txt"
 
 # 5. Finalize
 cd "$WORKSPACE" || exit
@@ -89,6 +88,7 @@ echo "---"
 echo "✅ Environment Ready!"
 echo "🤖 Target: $TARGET_NAME"
 echo "📜 Agent Persona: Claude.md (Impact-Focused)"
-echo "🔥 Run: 'claude --dangerously-skip-permissions -p \"\$(cat initial_goal.txt)\"' to begin."
+echo $INITIAL_GOAL
+echo "🔥 Run: 'claude --dangerously-skip-permissions' to begin."
 
 exec $SHELL
