@@ -98,6 +98,14 @@ Once you've found a reflection, probe what's filtered:
 * For each sink, trace backward — does data flow from a source to here without sanitization?
 * Tools: DOM Invader (Burp), Static Analysis with `ast-grep`, manual code review
 
+**Static grep gets you candidates; the live browser confirms the flow.** When you have a
+JS-rendered page, `postMessage`/`addEventListener('message')` handlers, or want to *prove* a
+source reaches a sink, drive Playwright (CLAUDE.md Mode 3) and read
+**[`playwright-dom-debugging.md`](playwright-dom-debugging.md)** — copy-paste `browser_evaluate`
+snippets that hook sinks (with stack traces), wiretap + fuzz `postMessage`, do live
+source→sink taint tracing, and capture CSP violations. Use it the moment grep finds a sink
+or a message handler and you can't tell from the HTTP response whether the flow is real.
+
 ### Step 5: Stored
 * Every persistence boundary: profile, posts, comments, tickets, files, custom fields
 * For each, plant a unique payload. Visit the rendering page as victim role (or yourself).

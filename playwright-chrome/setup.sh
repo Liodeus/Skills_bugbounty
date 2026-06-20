@@ -13,6 +13,12 @@ BURP_PORT="${BURP_PORT:-8080}"
 declare -A COLORS=([1]="red" [2]="blue" [3]="green")
 declare -A PORTS=([1]="8081" [2]="8082" [3]="8083")
 
+# To enable the opt-in DOM-XSS instrument (pre-load sink hooks + postMessage wiretap,
+# see SKILLS/xss/playwright-dom-debugging.md), add init/xss-instrument.js to the
+# initScript array below, e.g.:
+#   "initScript": ["$DIR/init/user${i}.js", "$DIR/init/xss-instrument.js"]
+# then re-run this script and restart the Playwright MCP. Remove it again when done —
+# it adds [XSSHOOK] console noise to every page.
 for i in 1 2 3; do
   cat > "$CONFIGS/user${i}.json" <<EOF
 {
