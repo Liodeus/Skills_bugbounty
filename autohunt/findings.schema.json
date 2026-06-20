@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["program_slug", "status", "summary", "findings", "leads_unverified"],
+  "properties": {
+    "program_slug": { "type": "string", "description": "The program slug being hunted." },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "no_findings", "error"],
+      "description": "completed = ran and produced verified finding(s); no_findings = ran cleanly, nothing proven; error = could not complete."
+    },
+    "summary": { "type": "string", "description": "1-3 sentence summary of what was tested and the outcome." },
+    "findings": {
+      "type": "array",
+      "description": "ONLY findings whose exploitation was concretely PROVEN against an oracle. Never include unproven/theoretical issues here.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "vuln_class", "severity", "asset", "endpoint", "verified", "oracle", "evidence", "dedupe_key"],
+        "properties": {
+          "title": { "type": "string" },
+          "vuln_class": {
+            "type": "string",
+            "enum": ["ssrf", "sqli", "rce", "cmdi", "ssti", "xxe", "idor", "rbac", "xss", "bxss", "ato", "secret", "business-logic", "other"]
+          },
+          "severity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"] },
+          "asset": { "type": "string", "description": "In-scope host the finding is on." },
+          "endpoint": { "type": "string", "description": "e.g. 'POST /api/v1/orders/123'." },
+          "verified": { "type": "boolean", "description": "MUST be true to be in this array. False ⇒ move it to leads_unverified." },
+          "oracle": { "type": "string", "description": "What concretely proved it (e.g. 'OOB DNS hit on canary abc.oob.example', 'second account read user-A order', 'alert(nonce) fired in headless browser')." },
+          "evidence": { "type": "string", "description": "Reproducible proof: exact request(s)+response field(s), ordered steps, or tool output. Enough for a human to re-verify." },
+          "report_path": { "type": "string", "description": "Filename of the report .md written in the workspace (report_<class>_<slug>_<date>.md)." },
+          "dedupe_key": { "type": "string", "description": "Stable key 'vuln_class:host:normalized-endpoint' for dedupe across runs." }
+        }
+      }
+    },
+    "leads_unverified": {
+      "type": "array",
+      "description": "Promising but UNPROVEN leads. Never reported or pushed; recorded for a human/next run.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "why_unproven"],
+        "properties": {
+          "title": { "type": "string" },
+          "why_unproven": { "type": "string", "description": "What's missing to prove it (needs creds, needs browser, WAF blocked, not reproducible, etc.)." }
+        }
+      }
+    }
+  }
+}
