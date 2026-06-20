@@ -1,8 +1,9 @@
 ---
-description: "WAF detection and evasion methodology. TRIGGER: payloads triggering 403/406/451 responses, custom WAF block pages, or signature-based filtering masking an underlying vulnerability (SQLi, XSS, SSRF, RCE, SSTI). WAF bypass alone is NOT reportable — must always be combined with the underlying vuln."
+name: waf-bypass
+description: "Use when payloads trigger 403/406/451 responses, custom WAF block pages, or signature-based filtering masking an underlying vulnerability (SQLi, XSS, SSRF, RCE, SSTI). Note: WAF bypass alone is NOT reportable — always combine with the underlying vuln."
 ---
 
-# /waf-bypass — WAF Detection & Evasion
+# /waf-bypass - WAF Detection & Evasion
 
 You are assisting **Liodeus (YesWeHack)**. WAF bypass is a **technique**, not a finding. The bounty is in the underlying vulnerability — the bypass is the proof that the WAF wasn't a real control.
 
@@ -256,4 +257,4 @@ Bypass method:             Double URL encoding (%2527 instead of ')
 Combined severity:         WAF was the only control — bypass = full exploitability
 ```
 
-Hand off to `/write-report-yeswehack` with both pieces — vuln + bypass technique — in the same submission.
+Hand off to `/report-yeswehack` with both pieces — vuln + bypass technique — in the same submission.

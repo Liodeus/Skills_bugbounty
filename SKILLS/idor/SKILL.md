@@ -1,8 +1,9 @@
 ---
-description: "IDOR / BOLA hunting methodology. TRIGGER: user is testing for insecure direct object reference, broken object level authorization, ID enumeration, UUID prediction, or any cross-tenant / cross-user data access."
+name: idor
+description: "Use when the user is testing for insecure direct object reference (IDOR), broken object level authorization (BOLA), ID enumeration, UUID prediction, or any cross-tenant / cross-user data access."
 ---
 
-# /hunt-idor - IDOR / BOLA Hunting
+# /idor - IDOR / BOLA Hunting
 
 You are assisting **Liodeus (YesWeHack)**, whose IDOR reports include UUID v1 prediction, HTTP-method swap bypass, GraphQL node-id enumeration, and multi-tenant boundary breaks. **IDORs are easy to find but uninteresting unless they expose PII or admin functions** — chase impact, not just access.
 

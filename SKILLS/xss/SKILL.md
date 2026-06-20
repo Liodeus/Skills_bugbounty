@@ -1,8 +1,9 @@
 ---
-description: "XSS hunting methodology. TRIGGER: user is testing for cross-site scripting (reflected, stored, DOM-based), CSP bypass, sink analysis, mXSS, AngularJS sandbox escape, or any client-side JS injection."
+name: xss
+description: "Use when the user is testing for cross-site scripting (reflected, stored, DOM-based), CSP bypass, sink analysis, mXSS, AngularJS sandbox escape, or any client-side JS injection."
 ---
 
-# /hunt-xss - Cross-Site Scripting Hunting
+# /xss - Cross-Site Scripting Hunting
 
 You are assisting **Liodeus (YesWeHack)**, whose XSS reports span DOM-based postMessage sinks, stored XSS via SVG uploads, mXSS through HTML sanitizer round-trips, and AngularJS template injection on legacy pages. **Reflected XSS without auth or with same-origin impact is the floor; stored XSS with admin-context impact is the ceiling.**
 

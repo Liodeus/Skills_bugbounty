@@ -10,6 +10,7 @@ This is the single most important framing. Internalize it:
 * **No program pays for theoretical, defense-in-depth, or "best practice" findings.** Don't waste tokens on them.
 * **The bar is impact you can demonstrate on real data**, with a working PoC, on a target in scope.
 * If you catch yourself writing up something a pentest report would include but a program would close as informative, **stop and pivot.**
+* **But don't discard a *confirmed* bug just because it isn't a crit.** A reproducible medium with real impact — a scoped IDOR, a non-admin stored XSS, an impactful CSRF — is paid on most programs. The priority order below is about where to spend time *first*, not a floor under which real findings get thrown away. Bank it, report it, keep hunting.
 
 ### Always-ignore list (do not report, do not spend cycles on)
 * CORS misconfigurations without demonstrated cross-origin read of credentialed response
@@ -52,11 +53,11 @@ Spend tokens in this order. Always.
 * Optionally, **credentials** or a **session/auth token**
 * Optionally, a **raw HTTP request** captured from Burp/Caido
 
-Start from what's given. Do not branch out into adjacent domains, parent domains, sibling subdomains, or "while we're here let's enum" territory. If the target URL is `https://app.target.com/dashboard`, stay on `app.target.com` and the APIs it calls.
+Start from what's given. Don't go off doing broad recon or "while we're here let's enum" on unrelated assets — **actively test** only the in-scope target (`app.target.com` and the APIs it calls). One distinction that matters: you *may inspect* an adjacent asset — a sibling/parent subdomain, archived JS, an older/mobile API — when a chain demonstrably routes back to in-scope impact (e.g. parent-domain cookie scope, or a subdomain-takeover that yields ATO on the target). Inspect to prove the chain; never launch active fuzzing/injection against an out-of-scope host.
 
 ### Tooling: Caido MCP — primary action surface
 
-**Caido is the default tool for all testing.** Every request you fire must go through Caido so it lands in the project history and stays correlated with findings. Never use `curl` — it throws requests into the void with no history, no context, and no replay chain.
+**Caido is the default tool and the system of record.** Route every request you *can* through Caido so it lands in project history and stays correlated with findings — prefer it over bare `curl` for anything you can replay or mutate as an HTTP request. When a technique genuinely needs another tool (race-condition bursts, `sqlmap`, `ffuf`), point that tool at your proxy so the traffic still lands in Caido's history; only if a one-off truly can't be proxied, fire it and note why. The rule is *captured, replayable traffic* — not a blanket ban on other tools.
 
 **Read — ground truth:**
 * Pull captured requests/responses from the active Caido project before doing anything else
@@ -171,7 +172,7 @@ For the given URL and the APIs it calls:
 
 ### Phase 4: Per-feature deep dive
 
-**Decomposition rule: one attack vector on one endpoint at a time, to completion, before moving on.** If a feature has multiple potential vectors, rank them by impact and work top-down. Do not scatter across endpoints simultaneously.
+**Decomposition rule: focus, don't scatter — but timebox.** Rank a feature's potential vectors by impact and work them top-down, one at a time rather than spraying across endpoints simultaneously. *Timebox each one:* if a vector isn't yielding signal, log what you tried and move to the next — don't sink-cost a dead end to "completion". (Breadth-first triage to build the priority list comes first; depth-one-at-a-time applies once you're working a specific feature.)
 
 For each feature, ask:
 * What data does it expose? Whose data?
@@ -212,7 +213,7 @@ A single primitive is rarely the bounty. Chain:
 * **No exfiltration of customer data.** Capture proof (1 record, your own user where possible, or hash/length of sensitive data) and stop.
 * **No social engineering of program staff** unless the program explicitly allows it.
 * **No mass email / phishing tests** — even simulated — unless explicitly in scope.
-* **Never use curl.** curl throws requests into the void — no history, no context, no replay chain. All requests go through Caido (`caido_send_request` or replay). No exceptions.
+* **Keep traffic captured.** Drive HTTP testing through Caido (`caido_send_request` or replay) so it's logged and replayable; don't fire bare `curl` that throws requests into the void. When a technique needs another tool (race bursts, `sqlmap`, `ffuf`), proxy it through Caido/your upstream so it still lands in history.
 * **Respect rate limits.** If the program has documented limits, stay below them. If not, stay under 10 req/s on production endpoints.
 * **WAF detected → don't brute-force.** If a WAF is detected (403/406/451 patterns, block page, WAF fingerprint), do NOT run ffuf recursively and do NOT hammer SQLi payloads. Either skip that technique or do it lightly with a small targeted wordlist, low concurrency, no recursion. Aggressive fuzzing behind a WAF burns the engagement, triggers IP bans, and produces noise.
 * **Halt on accidental impact.** If something breaks production-looking, stop and document — don't try to clean up by doing more requests.
@@ -283,23 +284,9 @@ Do not modify this CLAUDE.md per-program — modify the per-program memory.
 
 ## Skill triggers
 
-Invoke the matching skill the moment the signal appears. Do not reason from scratch when a skill exists.
-
-| Signal | Invoke |
-|---|---|
-| Testing auth flow, password reset, OAuth, session, 2FA, email change | `/ato` |
-| Planting payloads in fields rendered in admin panels, logs, support tools | `/bxss` |
-| Cross-user or cross-tenant object access by ID / UUID | `/idor` |
-| Role boundary, admin endpoint, vertical priv-esc | `/rbac` |
-| URL / callback / file-fetch parameter that could hit internal hosts | `/ssrf` |
-| User input reflected or stored and rendered in a browser | `/xss` |
-| File fetch, process exec, template render, deserialization, file write primitive | `/rce` |
-| XML / SVG / DOCX / SAML / SOAP input surface | `/xxe` |
-| DB query parameter, search field, filter, sort | `/sql` |
-| Template engine output, expression evaluation surface | `/ssti` |
-| Wordlist fuzzing needed for paths, params, or values | `/ffuf-skill` |
-| 403 / 406 / 451 / WAF block page on a payload | `/waf-bypass` |
-| All four reporting gates met (confirmed, in-scope, PoC, impact) | `/report-yeswehack` |
+Skills auto-surface from their `description:` triggers — invoke the matching one the moment its signal appears; don't reason from scratch when a skill exists. The only sequencing rules the descriptions can't express:
+* Chain `/waf-bypass` into the underlying-vuln skill — never report a bypass alone.
+* Invoke `/report-yeswehack` only once all four reporting gates are met (confirmed, in-scope, PoC, impact).
 
 ---
 

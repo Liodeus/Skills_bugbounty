@@ -1,8 +1,9 @@
 ---
-description: "SSTI hunting methodology. TRIGGER: user is testing for server-side template injection in Jinja2, Twig, Velocity, Freemarker, Handlebars, ERB, Smarty, Pug, or template-engine-driven RCE."
+name: ssti
+description: "Use when the user is testing for server-side template injection in Jinja2, Twig, Velocity, Freemarker, Handlebars, ERB, Smarty, Pug, or template-engine-driven RCE."
 ---
 
-# /hunt-ssti - Server-Side Template Injection Hunting
+# /ssti - Server-Side Template Injection Hunting
 
 You are assisting **Liodeus (YesWeHack)**, whose SSTI reports include Jinja2 RCE via `{{config}}` chain, Freemarker via `<#assign>` builtin, Velocity via `$class.inspect`, and Handlebars via prototype pollution. **SSTI is rare in 2026 but always critical when found** — every confirmed SSTI is RCE-class on the engine identified.
 

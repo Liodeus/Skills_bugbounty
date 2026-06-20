@@ -23,9 +23,15 @@ Constraints:
   Scanners already pick up the rest.
 - If you lack context on part of the app, say so rather than making
   things up.'
-SKILLS_BASE="/home/$(whoami)/Documents/Skills_bugbounty"
+# Resolve the repo root from this script's own location, so the launcher works
+# wherever the repo is cloned (no hardcoded ~/Documents/ or username assumption).
+SKILLS_BASE="$(cd "$(dirname "$0")" && pwd)"
 MASTER_CLAUDE_MD="$SKILLS_BASE/SKILLS/CLAUDE.md"
 BROWSER_DIR="$SKILLS_BASE/playwright-chrome"
+
+# Caido binary: override with CAIDO_BIN; otherwise prefer one on PATH, then the
+# newest caido AppImage in ~/Applications. Not version/host pinned.
+CAIDO_BIN="${CAIDO_BIN:-$(command -v caido 2>/dev/null || ls -t "$HOME"/Applications/caido-desktop-*.AppImage 2>/dev/null | head -1)}"
 
 # Capture launch dir so the workspace lands where the user invoked the script,
 # not wherever later `cd`s leave us.
@@ -60,7 +66,10 @@ echo "🚀 Starting automated hunt for: $TARGET_NAME"
 # 2. Launch Caido (reuse if already up)
 if ! lsof -i:8080 -t >/dev/null; then
     echo "🌐 Launching Caido instance..."
-    nohup /home/liodeus/Applications/caido-desktop-v0.56.0-linux-x86_64_703859cb772775dc3a128ae0be4eb186.AppImage > /tmp/caido.log 2>&1 &
+    if [ -z "$CAIDO_BIN" ] || [ ! -e "$CAIDO_BIN" ]; then
+        echo "❌ Caido binary not found. Install Caido or set CAIDO_BIN=/path/to/caido(.AppImage)"; exit 1
+    fi
+    nohup "$CAIDO_BIN" > /tmp/caido.log 2>&1 &
     wait_for_port 8080 30 || { echo "❌ Caido failed to start (see /tmp/caido.log)"; exit 1; }
 else
     echo "✅ Caido already on :8080 — reusing"
@@ -85,6 +94,14 @@ WORKSPACE="$INVOKED_FROM/$TARGET_NAME"
 echo "🏗️  Creating workspace: $WORKSPACE"
 mkdir -p "$WORKSPACE"
 cp "$MASTER_CLAUDE_MD" "$WORKSPACE/CLAUDE.md"
+
+# Install hunting skills into the workspace so Claude Code can discover/invoke
+# them (/ato, /idor, ...). The `*/` glob matches skill directories only, so
+# SKILLS/CLAUDE.md (a file) is correctly skipped.
+mkdir -p "$WORKSPACE/.claude/skills"
+for skill_dir in "$SKILLS_BASE"/SKILLS/*/; do
+    ln -sfn "$skill_dir" "$WORKSPACE/.claude/skills/$(basename "$skill_dir")"
+done
 
 # 5. Finalize
 cd "$WORKSPACE" || exit

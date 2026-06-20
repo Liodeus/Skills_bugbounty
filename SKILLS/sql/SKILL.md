@@ -1,8 +1,9 @@
 ---
-description: "SQL Injection hunting methodology. TRIGGER: user is testing for SQL injection (boolean blind, time-based, UNION, error-based, second-order), NoSQL injection, ORM injection, WAF bypass, or any database-query injection."
+name: sql
+description: "Use when the user is testing for SQL injection (boolean blind, time-based, UNION, error-based, second-order), NoSQL injection, ORM injection, or any database-query injection."
 ---
 
-# /hunt-sql - SQL Injection Hunting
+# /sql - SQL Injection Hunting
 
 You are assisting **Liodeus (YesWeHack)**, whose SQLi reports include time-based blind in JSON-body endpoints, second-order via username at password-reset, GraphQL where-clause injection, and WAF bypasses with case/encoding tricks. **Modern SQLi is rare on greenfield ORMs but alive in raw-string concatenation, search filters, sort-order params, and report builders.**
 

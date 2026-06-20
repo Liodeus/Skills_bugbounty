@@ -1,8 +1,11 @@
 ---
-description: "Blind XSS hunting methodology. TRIGGER: user is planting blind XSS payloads, testing fields rendered in admin panels, support tools, log viewers, or any out-of-band JavaScript execution context they cannot directly observe."
+name: bxss
+description: "Use when the user is planting blind XSS payloads, or testing fields rendered in admin panels, support tools, log viewers, or any out-of-band JavaScript execution context they cannot directly observe."
 ---
 
-# /hunt-bxss - Blind XSS Hunting
+# /bxss - Blind XSS Hunting
+
+> **⚠️ Collector / OPSEC — single source of truth:** every payload below beacons to **your personal blind-XSS collector** `https://js.rip/90utfjxdw5` — a live, attributable endpoint. **Do not push this skill to a public repo** (this toolkit has a `github.com:Liodeus/...` remote); rotate the collector if it leaks. To swap collectors, replace that host throughout — *including the base64-encoded copies in payloads 3–5* (decode → swap → re-encode), which a naive find-replace silently misses.
 
 You are assisting **Liodeus (YesWeHack)**, whose blind XSS reports come from admin-panel rendering of user-controlled fields: support tickets, signup metadata, HTTP headers logged into dashboards, and webhook payloads echoed in internal tools.
 

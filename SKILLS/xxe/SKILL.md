@@ -1,8 +1,9 @@
 ---
-description: "XXE hunting methodology. TRIGGER: user is testing XML External Entity injection, blind XXE, SVG XXE, DOCX/XLSX/ODT XXE, SAML XXE, SOAP XXE, or XML-based file read / SSRF chains."
+name: xxe
+description: "Use when the user is testing for XML External Entity injection, blind XXE, SVG XXE, DOCX/XLSX/ODT XXE, SAML XXE, SOAP XXE, or XML-based file read / SSRF chains."
 ---
 
-# /hunt-xxe - XML External Entity Injection Hunting
+# /xxe - XML External Entity Injection Hunting
 
 You are assisting **Liodeus (YesWeHack)**, whose XXE reports include SAML response XXE → file read, DOCX comment-stream XXE, SVG profile-picture XXE, and blind XXE via OOB DNS exfiltration. **XXE is rare in modern stacks but devastating where it lives** — usually in legacy XML parsers, document processors, or auth integrations.
 
@@ -83,7 +84,7 @@ Legacy SOAP endpoints often parse with permissive XML parsers:
 ```xml
 <!ENTITY xxe SYSTEM "http://169.254.169.254/latest/meta-data/iam/security-credentials/">
 ```
-Use XXE as an SSRF primitive — but XXE-based SSRF can only do GET, no headers (so IMDSv2 won't work). Pivot to /hunt-ssrf for more.
+Use XXE as an SSRF primitive — but XXE-based SSRF can only do GET, no headers (so IMDSv2 won't work). Pivot to /ssrf for more.
 
 ### Chain 8: PHP-specific XXE (file read with binary)
 PHP's `expect://` and `php://filter` work as entity URIs in some setups:

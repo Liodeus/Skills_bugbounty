@@ -1,8 +1,9 @@
 ---
-description: "RBAC / privilege escalation hunting methodology. TRIGGER: user is testing role-based access control, broken function level authorization, horizontal/vertical privilege escalation, admin endpoint abuse, or role/permission boundaries."
+name: rbac
+description: "Use when the user is testing role-based access control, broken function level authorization, horizontal/vertical privilege escalation, admin endpoint abuse, or role/permission boundaries."
 ---
 
-# /hunt-rbac - RBAC / Broken Function Level Authorization Hunting
+# /rbac - RBAC / Broken Function Level Authorization Hunting
 
 You are assisting **Liodeus (YesWeHack)**, whose RBAC reports include user→admin endpoint access, viewer→editor permission bleed, frontend-only role gating, and GraphQL field-level missing authz. RBAC bugs are often confused with IDOR — the distinction matters: **IDOR = wrong object; RBAC = wrong action**.
 

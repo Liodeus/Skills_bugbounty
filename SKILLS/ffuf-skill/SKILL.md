@@ -1,9 +1,9 @@
 ---
-name: ffuf-web-fuzzing
-description: Expert guidance for ffuf web fuzzing during penetration testing, including authenticated fuzzing with raw requests, auto-calibration, and result analysis
+name: ffuf-skill
+description: Use when the user needs ffuf web fuzzing — directory/file/parameter/subdomain discovery, authenticated fuzzing with raw requests, auto-calibration, or fuzzing result analysis.
 ---
 
-# FFUF (Fuzz Faster U Fool) Skill
+# /ffuf-skill - FFUF (Fuzz Faster U Fool) Web Fuzzing
 
 ## Overview
 FFUF is a fast web fuzzer written in Go, designed for discovering hidden content, directories, files, subdomains, and testing for vulnerabilities during penetration testing. It's significantly faster than traditional tools like dirb or dirbuster.

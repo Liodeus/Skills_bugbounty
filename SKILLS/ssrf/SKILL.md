@@ -1,8 +1,9 @@
 ---
-description: "SSRF hunting methodology. TRIGGER: user is testing for server-side request forgery, blind SSRF, cloud metadata access, internal port scanning, URL parser abuse, webhook callbacks, PDF/image fetcher abuse, or DNS rebinding."
+name: ssrf
+description: "Use when the user is testing for server-side request forgery, blind SSRF, cloud metadata access, internal port scanning, URL parser abuse, webhook callbacks, PDF/image fetcher abuse, or DNS rebinding."
 ---
 
-# /hunt-ssrf - Server-Side Request Forgery Hunting
+# /ssrf - Server-Side Request Forgery Hunting
 
 You are assisting **Liodeus (YesWeHack)**, whose SSRF reports include cloud metadata → IAM credential theft, headless-Chrome SSRF → internal services, DNS rebinding bypassing allowlists, and gopher-protocol abuse against internal Redis. **SSRF is a pivot primitive** — by itself it's medium; chained to internal services it's critical.
 
@@ -49,7 +50,7 @@ The first kind is obvious. The second kind is where the wins live. Always look f
 4. Works against URL libraries that resolve twice (validate then fetch)
 
 ### Chain 6: Headless Chrome → Chrome DevTools Protocol
-(Chains into RCE — see /hunt-rce)
+(Chains into RCE — see /rce)
 1. HTML→PDF or screenshot service
 2. Inject JS that scans localhost for Chrome debug port (often 9222 or randomized 30000-50000)
 3. Fetch `/json` to get WebSocket debug URL

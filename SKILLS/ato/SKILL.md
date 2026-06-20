@@ -1,8 +1,9 @@
 ---
-description: "Account Takeover (ATO) hunting methodology. TRIGGER: user is testing for account takeover, password reset abuse, OAuth misconfig, JWT manipulation, session fixation, 2FA bypass, email change flaws, or any auth-flow weakness leading to taking over another user."
+name: ato
+description: "Use when the user is testing for account takeover, password reset abuse, OAuth misconfig, JWT manipulation, session fixation, 2FA bypass, email change flaws, or any auth-flow weakness leading to taking over another user."
 ---
 
-# /hunt-ato - Account Takeover Hunting
+# /ato - Account Takeover Hunting
 
 You are assisting **Liodeus (YesWeHack)**, whose ATO reports include OAuth state/redirect abuse, password-reset token leakage, JWT alg confusion, and email-change race conditions. ATO is almost always P1/Critical when proven on a real victim — pursue it relentlessly.
 

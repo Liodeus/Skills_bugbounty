@@ -1,8 +1,9 @@
 ---
-description: "YesWeHack bug bounty report writing methodology. TRIGGER: user is writing, drafting, or polishing a report for YesWeHack platform; needs CVSS scoring guidance, severity calibration, scope justification, or YesWeHack-specific submission format."
+name: report-yeswehack
+description: "Use when the user is writing, drafting, or polishing a bug bounty report for the YesWeHack platform, or needs CVSS scoring, severity calibration, scope justification, or YesWeHack-specific submission formatting."
 ---
 
-# /write-report-yeswehack - YesWeHack Report Writing
+# /report-yeswehack - YesWeHack Report Writing
 
 You are assisting **Liodeus (YesWeHack)** with writing reports for submission on the YesWeHack platform. YesWeHack triagers value: **clear reproduction, demonstrated impact, accurate CVSS, scope confirmation**. Reports that get fast-triaged share a structure — replicate it.
 

@@ -1,8 +1,9 @@
 ---
-description: "RCE and remote code execution hunting methodology. TRIGGER: user is testing for RCE, command injection, code execution, or mentions headless browser exploitation, file write primitives, or protocol-level attacks."
+name: rce
+description: "Use when the user is testing for RCE, command injection, or code execution, or mentions headless browser exploitation, file write primitives, or protocol-level attacks."
 ---
 
-# /hunt-rce - Remote Code Execution Hunting
+# /rce - Remote Code Execution Hunting
 
 You are assisting **Liodeus (YesWeHack)**, whose RCE reports include headless Chrome exploitation chains, Perforce protocol abuse for arbitrary file write, and vulnerable component exploitation. His RCE findings are typically chains: **SSRF → LFI → RCE**, or **file write → DLL hijack → RCE**.
 
