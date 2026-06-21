@@ -493,6 +493,35 @@ def _scan_json(text):
         i = j + 1
 
 
+_USAGE_RE = re.compile(r"usage limit|rate.?limit|limit reached|too many requests|"
+                       r"resets? (?:at|in)|5-?hour limit|weekly limit|quota exceeded", re.I)
+_EPOCH_RE = re.compile(r"\b(1[7-9]\d{8}|20\d{8})\b")  # 10-digit unix epoch (~2023–2033)
+
+
+def _usage_limit_reset(result, stderr):
+    """If the result looks like a Claude usage/rate limit, return a reset epoch (or 0 if unknown);
+    else None. Gated on an actual error so a successful run mentioning 'rate limit' isn't caught."""
+    text = (stderr or "")
+    if isinstance(result, dict):
+        if result.get("is_error") is False and isinstance(result.get("structured_output"), dict):
+            return None  # clean, parsed success → definitely not a limit
+        text += " " + " ".join(str(result.get(k, "")) for k in ("result", "subtype", "error", "_stderr", "_unparsed"))
+    if not _USAGE_RE.search(text):
+        return None
+    m = _EPOCH_RE.search(text)
+    return int(m.group(1)) if m else 0
+
+
+def _interruptible_sleep(secs):
+    """Sleep, but bail early if the STOP sentinel appears. Returns True if interrupted by STOP."""
+    end = time.time() + secs
+    while time.time() < end:
+        if (HUNTS / "STOP").exists():
+            return True
+        time.sleep(min(5.0, max(0.0, end - time.time())))
+    return False
+
+
 def run_claude(prompt, schema, ws, env, args, max_turns, max_budget, model=None):
     cmd = ["claude", "-p", prompt,
            "--add-dir", str(SKILLS),
@@ -511,25 +540,46 @@ def run_claude(prompt, schema, ws, env, args, max_turns, max_budget, model=None)
     m = model or args.model
     if m:
         cmd += ["--model", m]
-    try:
-        proc = subprocess.run(cmd, cwd=str(ws), env=env, capture_output=True, text=True,
-                              timeout=args.timeout, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        # the session ran up to the cap → charge the per-session budget so the global
-        # guard can't be silently overshot by a night of timeouts.
-        return {"_timeout": True, "subtype": "timeout", "total_cost_usd": max_budget}
-    except FileNotFoundError:
-        sys.exit("`claude` CLI not found on PATH. Install Claude Code or run with --dry-run.")
-    if not proc.stdout.strip():
-        return {"_empty": True, "subtype": "empty", "_stderr": proc.stderr[-2000:]}
-    try:
-        return json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        obj = _scan_json(proc.stdout)
-        if obj is not None:
-            return obj
-        return {"_unparsed": proc.stdout[-2000:], "subtype": "unparsed",
-                "total_cost_usd": max_budget, "_stderr": proc.stderr[-2000:]}
+
+    waits = 0
+    while True:
+        try:
+            proc = subprocess.run(cmd, cwd=str(ws), env=env, capture_output=True, text=True,
+                                  timeout=args.timeout, stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            return {"_timeout": True, "subtype": "timeout", "total_cost_usd": max_budget}
+        except FileNotFoundError:
+            sys.exit("`claude` CLI not found on PATH. Install Claude Code or run with --dry-run.")
+
+        stderr_tail = proc.stderr[-2000:]
+        if not proc.stdout.strip():
+            result = {"_empty": True, "subtype": "empty", "_stderr": stderr_tail}
+        else:
+            try:
+                result = json.loads(proc.stdout)
+            except json.JSONDecodeError:
+                obj = _scan_json(proc.stdout)
+                result = obj if obj is not None else {
+                    "_unparsed": proc.stdout[-2000:], "subtype": "unparsed",
+                    "total_cost_usd": max_budget, "_stderr": stderr_tail}
+
+        # Usage-limit aware backoff: pause until the window resets and retry the SAME call,
+        # rather than burning the program into "failed". (STOP aborts the wait.)
+        reset = _usage_limit_reset(result, stderr_tail)
+        if reset is not None and waits < args.max_usage_waits and not (HUNTS / "STOP").exists():
+            waits += 1
+            if reset and reset > time.time():
+                wait = int(min(max(reset - time.time() + 30, 60), 6 * 3600))
+            else:
+                wait = int(args.usage_backoff)
+            log(f"[usage] Claude usage limit hit — pausing ~{wait // 60}m then retrying "
+                f"(attempt {waits}/{args.max_usage_waits}).")
+            discord_send(content=f"⏳ autohunt paused — Claude usage limit; resuming in ~{max(1, wait // 60)} min.")
+            if _interruptible_sleep(wait):
+                log("[usage] STOP during backoff — aborting.")
+                return result
+            continue
+        return result
 
 
 def extract_structured(result):
@@ -870,6 +920,10 @@ def parse_args():
                     help="Route tool traffic through a mitmdump that hard-caps per-host req/s (true global rate ceiling).")
     ap.add_argument("--selftest", action="store_true",
                     help="Preflight: readiness report + firewall sanity + a benign live hunt (use with --dry-run for static-only).")
+    ap.add_argument("--usage-backoff", type=int, default=1800,
+                    help="On a Claude usage limit with no known reset time, pause this many seconds then retry (default 1800).")
+    ap.add_argument("--max-usage-waits", type=int, default=10,
+                    help="Max consecutive usage-limit pause/retry cycles per session before giving up (default 10).")
     return ap.parse_args()
 
 

@@ -111,9 +111,16 @@ The scraper also auto-detects a non-TTY and **refuses to prompt** (fails fast) r
 ./run.sh --every 3600 -- --only-changed --bbp-only --oob your.canary.host
 ```
 Stop any time with `touch data/hunts/STOP` (also a button in the dashboard). Safety for long runs is
-built in: per-target + global `$` caps, a **circuit-breaker** that halts on repeated auth/usage-limit
-failures (so it won't spin forever), and the scope/rate firewall. Findings are still **human-gated** —
-autohunt writes reports + alerts Discord; you review and submit.
+built in: per-target + global `$` caps (notional "usage units" on a subscription), the scope/rate
+firewall, and a **circuit-breaker** that halts on repeated auth/network failures. Findings are still
+**human-gated** — autohunt writes reports + alerts Discord; you review and submit.
+
+**Hitting your Claude usage limit is handled automatically:** when a session reports a usage/rate
+limit, autohunt **pauses until the window resets and retries the same target** (it reads the reset
+time if present, else waits `--usage-backoff` seconds, up to `--max-usage-waits` cycles) — and pings
+Discord that it's paused. So an overnight run rides through your 5-hour windows instead of failing.
+On a Max plan, stay on the default `sonnet` model and use `--only-changed`/`--limit` to make each
+window go further.
 
 ## How the auto-loop works (intelligent dispatch)
 
