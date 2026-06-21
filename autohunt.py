@@ -46,8 +46,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
 AUTOHUNT = REPO / "autohunt"
-CATALOG = REPO / "data" / "yeswehack"
-HUNTS = REPO / "data" / "hunts"
+_DATA_DIR = Path(os.environ["AUTOHUNT_DATA_DIR"]) if os.environ.get("AUTOHUNT_DATA_DIR") else REPO / "data"
+CATALOG = _DATA_DIR / "yeswehack"   # AUTOHUNT_DATA_DIR isolates state (used by the GEPA harness)
+HUNTS = _DATA_DIR / "hunts"
 SKILLS = REPO / "SKILLS"
 
 DOCTRINE = AUTOHUNT / "doctrine.md"
@@ -56,6 +57,22 @@ VERIFIER_PROMPT = AUTOHUNT / "verifier.md"
 AGENTS = AUTOHUNT / "agents"
 SCHEMAS = AUTOHUNT / "schemas"
 FINDINGS_SCHEMA = AUTOHUNT / "findings.schema.json"
+
+# Prompt-override hook (for the GEPA optimizer): if AUTOHUNT_PROMPT_OVERRIDE points at a mirror dir,
+# source the prompt components from there instead of the repo — per-file, so a partial override works.
+# Schemas + the firewall hook are NEVER overridden. Lets the optimizer run a candidate's prompts with
+# zero repo mutation.
+_PROMPT_OVERRIDE = os.environ.get("AUTOHUNT_PROMPT_OVERRIDE")
+if _PROMPT_OVERRIDE:
+    _ov = Path(_PROMPT_OVERRIDE)
+    if (_ov / "doctrine.md").exists():
+        DOCTRINE = _ov / "doctrine.md"
+    if (_ov / "verifier.md").exists():
+        VERIFIER_PROMPT = _ov / "verifier.md"
+    if (_ov / "SKILLS").is_dir():
+        SKILLS = _ov / "SKILLS"
+    if (_ov / "agents").is_dir():
+        AGENTS = _ov / "agents"
 
 WEB_TYPES = {"web-application", "api", ""}  # "" = bare-string scope with no type → treat as web
 HOST_RE = re.compile(r"^\*?\.?(?:[a-z0-9_-]+\.)+[a-z]{2,}$")
