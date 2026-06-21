@@ -387,6 +387,12 @@ def setup_workspace(p, allow, seeds, out_hosts, args):
 
 def hunter_env(allow, out_hosts, args, capture_env):
     env = os.environ.copy()
+    if not getattr(args, "use_api", False):
+        # Drive child `claude -p` sessions with the Claude SUBSCRIPTION (the `claude` login),
+        # NOT API billing. If an ANTHROPIC_API_KEY is present in the shell, Claude Code would
+        # prefer it (API credits); remove it so the subscription OAuth creds are used instead.
+        env.pop("ANTHROPIC_API_KEY", None)
+        env.pop("ANTHROPIC_AUTH_TOKEN", None)
     env["AUTOHUNT_SCOPE"] = " ".join(allow)
     env["AUTOHUNT_OUT_OF_SCOPE"] = " ".join(out_hosts)
     env["AUTOHUNT_MAX_RPS"] = str(args.max_rps)
@@ -763,9 +769,25 @@ def write_cost_report(rc):
 # --------------------------------------------------------------------------- #
 # prereqs / args / queue
 # --------------------------------------------------------------------------- #
+def _subscription_logged_in():
+    if (Path.home() / ".claude" / ".credentials.json").exists():
+        return True
+    try:
+        return bool(json.loads((Path.home() / ".claude.json").read_text()).get("oauthAccount"))
+    except Exception:
+        return False
+
+
 def check_prereqs(args):
     if not args.dry_run and not shutil.which("claude"):
         sys.exit("`claude` CLI not found on PATH. Install Claude Code or use --dry-run.")
+    if not args.dry_run:
+        if args.use_api:
+            if not os.environ.get("ANTHROPIC_API_KEY"):
+                log("WARNING: --use-api set but ANTHROPIC_API_KEY is not exported.")
+        elif not _subscription_logged_in():
+            log("WARNING: no Claude subscription login detected — run `claude` then /login "
+                "(child sessions use your subscription, not the API; pass --use-api to bill the API).")
     missing = [t for t in RECON_TOOLS if not shutil.which(t)]
     if missing:
         log(f"WARNING: recon tools missing (reduced capability): {', '.join(missing)} — run ./install_tools.sh")
@@ -790,6 +812,8 @@ def parse_args():
     ap.add_argument("--model", default="opus", help="Planner/hunter model (e.g. opus, sonnet).")
     ap.add_argument("--verify-model", default="opus", help="Refuter/triage model (a strong skeptic).")
     ap.add_argument("--permission-mode", default="bypassPermissions")
+    ap.add_argument("--use-api", action="store_true",
+                    help="Bill the Anthropic API (keep ANTHROPIC_API_KEY). Default: use your Claude subscription.")
     ap.add_argument("--max-turns", type=int, default=80, help="Per-session turn cap (planner + its subagents).")
     ap.add_argument("--max-budget-usd", type=float, default=5.0, help="Per-target $ ceiling (global, incl. subagents).")
     ap.add_argument("--timeout", type=int, default=3000, help="Per-session wall-clock seconds.")
@@ -848,8 +872,9 @@ def main():
         print("\n(dry run — nothing executed)")
         return
 
-    log(f"Run: {len(queue)} program(s). mode={args.mode} model={args.model} verify={args.verify_model} "
-        f"per-target=${args.max_budget_usd} global=${args.max_total_usd} rps≤{args.max_rps} capture={args.capture}")
+    log(f"Run: {len(queue)} program(s). mode={args.mode} auth={'api' if args.use_api else 'subscription'} "
+        f"model={args.model} verify={args.verify_model} per-target=${args.max_budget_usd} "
+        f"global=${args.max_total_usd} rps≤{args.max_rps} capture={args.capture}")
     discord_send(content=f"🚀 autohunt ({args.mode}) — {len(queue)} program(s) queued.")
 
     rc = new_run_cost()

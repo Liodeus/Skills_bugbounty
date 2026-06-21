@@ -69,6 +69,20 @@ python autohunt/web/server.py --data-dir data       # http://127.0.0.1:8675
 
 ---
 
+## Authentication — uses your Claude subscription (not the API)
+
+autohunt runs every `claude -p` session on **your Claude subscription** (the `claude` login / OAuth),
+**not** API-key billing. So `hunter_env` **drops `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` from child
+sessions** by default — if you happen to have an API key exported, it's ignored so you don't burn API
+credits. It never uses `--bare` (which would require an API key).
+
+- **Prerequisite:** be logged in — run `claude` once and `/login` (Pro/Max). autohunt warns at start
+  if no subscription login is detected.
+- **To bill the API instead:** pass `--use-api` (keeps `ANTHROPIC_API_KEY`).
+- Note: the `$` figures in the ledger / `cost_report.md` are **usage estimates**; on a subscription
+  the real limit is your plan's rate limits, and `--max-budget-usd`/`--max-total-usd` act as
+  estimate-based stop guards.
+
 ## How the auto-loop works (intelligent dispatch)
 
 Per program, one **planner** `claude -p` session:

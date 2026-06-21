@@ -42,6 +42,8 @@ command -v claude >/dev/null 2>&1 || { echo "ERROR: claude CLI not found on PATH
 miss=(); for t in subfinder httpx katana nuclei ffuf dnsx jq node; do command -v "$t" >/dev/null 2>&1 || miss+=("$t"); done
 [ ${#miss[@]} -gt 0 ] && warn "recon tools missing (reduced capability): ${miss[*]} — run ./install_tools.sh"
 [ -n "${DISCORD_WEBHOOK_URL:-}" ] || warn "DISCORD_WEBHOOK_URL not set — notifications will be skipped."
+[ -n "${ANTHROPIC_API_KEY:-}" ] && warn "ANTHROPIC_API_KEY is set — autohunt uses your Claude SUBSCRIPTION and ignores it (pass: -- --use-api to bill the API)."
+ok "auth: Claude subscription (run \`claude\` + /login if not already)."
 ok "kill-switch: touch ${REPO}/data/hunts/STOP to halt the loop gracefully."
 
 # --- optional dashboard (background) ---
