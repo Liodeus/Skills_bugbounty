@@ -3,35 +3,40 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
   <title>autohunt dashboard</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
+  <a href="#view" class="skip">Skip to content</a>
   <aside class="sidebar">
     <div class="brand">⚡ autohunt</div>
-    <nav id="nav">
-      <a href="#/overview" data-view="overview">Overview</a>
-      <a href="#/programs" data-view="programs">Programs</a>
-      <a href="#/findings" data-view="findings">Findings</a>
-      <a href="#/leads" data-view="leads">Leads</a>
-      <a href="#/cost" data-view="cost">Cost</a>
-      <a href="#/changes" data-view="changes">Changes &amp; Alerts</a>
-      <a href="#/log" data-view="log">Live log</a>
+    <nav id="nav" aria-label="Sections">
+      <a href="#/overview" data-view="overview">📊 Overview</a>
+      <a href="#/programs" data-view="programs">🎯 Programs</a>
+      <a href="#/findings" data-view="findings">🔒 Findings</a>
+      <a href="#/leads" data-view="leads">🔎 Leads</a>
+      <a href="#/cost" data-view="cost">💲 Cost</a>
+      <a href="#/changes" data-view="changes">📡 Changes &amp; Alerts</a>
+      <a href="#/log" data-view="log">📜 Live log</a>
     </nav>
-    <div class="conn"><span id="dot" class="dot"></span><span id="connlabel">connecting…</span></div>
+    <div class="conn" title="Live connection status">
+      <span id="dot" class="dot" aria-hidden="true"></span><span id="connlabel">connecting…</span>
+    </div>
   </aside>
 
   <main class="main">
     <header class="topbar">
-      <div id="crumb">Overview</div>
+      <h1 id="crumb">Overview</h1>
       <div class="spacer"></div>
-      <button id="refresh" title="Refresh">↻</button>
-      <span id="updated" class="muted"></span>
+      <span id="updated" class="muted" aria-live="polite"></span>
+      <button id="pause" class="tbtn" title="Pause live auto-refresh" aria-pressed="false">⏸ Live</button>
+      <button id="refresh" class="tbtn" title="Refresh now" aria-label="Refresh">↻</button>
     </header>
-    <section id="view" class="view"><div class="loading">loading…</div></section>
+    <section id="view" class="view" tabindex="-1"><div class="skeleton"></div></section>
   </main>
 
-  <div id="toasts" class="toasts"></div>
+  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
   <script src="/static/app.js"></script>
 </body>
 </html>

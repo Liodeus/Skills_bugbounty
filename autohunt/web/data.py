@@ -44,8 +44,24 @@ def _iter_jsonl(path: Path):
         return
 
 
+import re as _re
+
+# Defense-in-depth sanitisation: program descriptions / agent reports are rendered as HTML in the
+# dashboard; strip active content so a malicious program `rules` blob can't run JS in your browser.
+_STRIP_TAGS = _re.compile(r"<\s*(script|style|iframe|object|embed|form|link|meta)\b[^>]*>.*?<\s*/\s*\1\s*>",
+                          _re.I | _re.S)
+_STRIP_SELFCLOSE = _re.compile(r"<\s*(script|style|iframe|object|embed|link|meta)\b[^>]*/?>", _re.I)
+_ON_ATTR = _re.compile(r"\son\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", _re.I)
+_JS_URL = _re.compile(r"((?:href|src))\s*=\s*(\"|')\s*(?:javascript|data|vbscript):[^\"']*\2", _re.I)
+
+
 def _md(text: str) -> str:
-    return md.markdown(text or "", extensions=["tables", "fenced_code", "sane_lists"])
+    html = md.markdown(text or "", extensions=["tables", "fenced_code", "sane_lists"])
+    html = _STRIP_TAGS.sub("", html)
+    html = _STRIP_SELFCLOSE.sub("", html)
+    html = _ON_ATTR.sub("", html)
+    html = _JS_URL.sub(r'\1=\2#\2', html)
+    return html
 
 
 def vuln_class_from_key(key: str) -> str:
