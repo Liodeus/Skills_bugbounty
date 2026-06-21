@@ -94,8 +94,9 @@ Everything from `./run.sh` down is **headless and unattended**; `--every N` repe
 ## Quickstart
 
 ```bash
-# 1. Install the toolchain (Go recon tools, Playwright, mitmproxy, jq) — one time.
-./install_tools.sh                 # ./install_tools.sh --check to just see what's present
+# 1. Install the toolchain (recon tools, mitmproxy, Playwright+Chromium, jq) — one time, NO sudo.
+./install_tools.sh                 # prebuilt binaries → ~/.local/bin; --check to just report status
+                                   # (also adds ~/.local/bin to your shell PATH)
 pip install -r requirements.txt    # requests (scraper/orchestrator)
 
 # 2. Credentials + notifications (env)
