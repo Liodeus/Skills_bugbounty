@@ -86,6 +86,35 @@ credits. It never uses `--bare` (which would require an API key).
   the real limit is your plan's rate limits, and `--max-budget-usd`/`--max-total-usd` act as
   estimate-based stop guards.
 
+## Fully unattended operation
+
+Once set up, autohunt runs with **zero human interaction** — the planner loop discovers and proves
+vulnerabilities on its own. The run path has no prompts: the loop never asks for permission
+(`--dangerously-skip-permissions` + a `PreToolUse` firewall that denies out-of-scope/over-rate calls
+programmatically), `claude -p` reads no stdin, and there's no MCP auth.
+
+**One-time setup (needs you, once):** `./install_tools.sh` (sudo), `claude` → `/login` (subscription).
+
+**Make the catalog scrape non-interactive** (the only prompt that remains) by putting one of these in
+`.env`:
+- `YWH_TOTP_SECRET` — your 2FA base32 seed; autohunt generates the 6-digit code itself (RFC 6238).
+- `YWH_PAT` — a YesWeHack personal access token (used directly, skips login + TOTP).
+
+The scraper also auto-detects a non-TTY and **refuses to prompt** (fails fast) rather than hang.
+
+**Launch and walk away:**
+```bash
+# one full headless sweep (scrape → hunt every catalogued program):
+./run.sh -- --bbp-only --max-budget-usd 4 --oob your.canary.host
+
+# continuous daemon — re-scrape + hunt new/changed programs forever, until you STOP it:
+./run.sh --every 3600 -- --only-changed --bbp-only --oob your.canary.host
+```
+Stop any time with `touch data/hunts/STOP` (also a button in the dashboard). Safety for long runs is
+built in: per-target + global `$` caps, a **circuit-breaker** that halts on repeated auth/usage-limit
+failures (so it won't spin forever), and the scope/rate firewall. Findings are still **human-gated** —
+autohunt writes reports + alerts Discord; you review and submit.
+
 ## How the auto-loop works (intelligent dispatch)
 
 Per program, one **planner** `claude -p` session:

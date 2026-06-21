@@ -9,10 +9,13 @@
 #   ./run.sh --public-only         # scrape only public programs, then loop
 #   ./run.sh --no-refresh          # skip the scrape; just run the loop on the existing catalog
 #   ./run.sh --monitor             # change-detection pass instead of a hunt (alerts only)
-#   ./run.sh --dashboard           # also start the read-only dashboard (http://127.0.0.1:8675)
+#   ./run.sh --dashboard           # also start the dashboard (http://127.0.0.1:8675)
+#   ./run.sh --every 3600 -- --only-changed   # DAEMON: re-scrape + hunt every hour until STOP
 #   ./run.sh -- --program acme --max-budget-usd 4 --model sonnet     # pass args through to autohunt.py
 #
 # Anything after `--` is passed verbatim to autohunt.py. Kill-switch: `touch data/hunts/STOP`.
+# Fully unattended: set YWH_TOTP_SECRET (or YWH_PAT) in .env so the scrape never prompts; the
+# scraper also auto-detects a non-TTY and refuses to prompt. --every makes it run forever.
 #
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")" && pwd)"
@@ -20,19 +23,21 @@ cd "$REPO"
 [ -f "$REPO/.env" ] && { set -a; . "$REPO/.env"; set +a; }   # auto-load .env if present
 PY="${PYTHON:-python3}"
 
-PUBLIC_ONLY=0; NO_REFRESH=0; MONITOR=0; DASHBOARD=0; PASS=()
+PUBLIC_ONLY=0; NO_REFRESH=0; MONITOR=0; DASHBOARD=0; EVERY=0; PASS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --public-only) PUBLIC_ONLY=1 ;;
     --no-refresh)  NO_REFRESH=1 ;;
     --monitor)     MONITOR=1 ;;
     --dashboard)   DASHBOARD=1 ;;
+    --every)       shift; EVERY="${1:-0}" ;;
     --) shift; PASS=("$@"); break ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown arg: $1 (use -- to pass args to autohunt.py; --help for usage)"; exit 2 ;;
   esac
   shift
 done
+case "$EVERY" in ''|*[!0-9]*) echo "--every needs an integer (seconds)"; exit 2 ;; esac
 
 c_y=$'\033[33m'; c_g=$'\033[32m'; c_off=$'\033[0m'
 warn(){ echo "${c_y}[!]${c_off} $*"; }
@@ -54,18 +59,38 @@ if [ "$DASHBOARD" = 1 ]; then
   nohup "$DPY" autohunt/web/server.py --data-dir data --port 8675 >/tmp/autohunt-web.log 2>&1 &
 fi
 
-# --- 1. refresh catalog ---
-if [ "$NO_REFRESH" = 0 ] && [ "$MONITOR" = 0 ]; then
-  args=(); [ "$PUBLIC_ONLY" = 1 ] && args+=(--public-only)
-  ok "refreshing catalog: $PY yeswehack_programs.py ${args[*]}"
-  "$PY" yeswehack_programs.py "${args[@]}" || { echo "catalog refresh failed"; exit 1; }
-fi
+STOPFILE="$REPO/data/hunts/STOP"
 
-# --- 2. run the loop (or monitor) ---
-if [ "$MONITOR" = 1 ]; then
-  ok "monitor pass: $PY autohunt.py --monitor ${PASS[*]}"
-  exec "$PY" autohunt.py --monitor "${PASS[@]}"
+refresh() {  # returns non-zero on failure (caller decides whether to continue)
+  [ "$NO_REFRESH" = 1 ] && return 0
+  [ "$MONITOR" = 1 ] && return 0   # monitor doesn't need a fresh scrape
+  local a=(); [ "$PUBLIC_ONLY" = 1 ] && a+=(--public-only)
+  [ "$EVERY" -gt 0 ] && a+=(--non-interactive)   # daemon must never block on a prompt
+  ok "refreshing catalog: $PY yeswehack_programs.py ${a[*]}"
+  "$PY" yeswehack_programs.py "${a[@]}"
+}
+
+run_pass() {
+  if [ "$MONITOR" = 1 ]; then
+    ok "monitor pass: $PY autohunt.py --monitor ${PASS[*]}"
+    "$PY" autohunt.py --monitor "${PASS[@]}"
+  else
+    ok "auto-loop: $PY autohunt.py --mode planner ${PASS[*]}"
+    "$PY" autohunt.py --mode planner "${PASS[@]}"
+  fi
+}
+
+if [ "$EVERY" -gt 0 ]; then
+  ok "daemon mode — every ${EVERY}s (touch $STOPFILE to stop)"
+  while :; do
+    [ -f "$STOPFILE" ] && { ok "STOP present — exiting daemon."; break; }
+    refresh || warn "catalog refresh failed — continuing with the existing catalog"
+    run_pass || warn "pass exited non-zero — continuing"
+    [ -f "$STOPFILE" ] && { ok "STOP present — exiting daemon."; break; }
+    ok "sleeping ${EVERY}s…"
+    sleep "$EVERY"
+  done
 else
-  ok "auto-loop: $PY autohunt.py --mode planner ${PASS[*]}"
-  exec "$PY" autohunt.py --mode planner "${PASS[@]}"
+  refresh || { echo "catalog refresh failed"; exit 1; }
+  run_pass   # single pass
 fi

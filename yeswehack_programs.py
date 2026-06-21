@@ -14,6 +14,10 @@ All requests send `Authorization: Bearer <token>`.
 
 import argparse
 import base64
+import hashlib
+import hmac
+import re
+import struct
 import getpass
 import json
 import os
@@ -23,6 +27,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+
+
+def _totp_now(secret, digits=6, period=30, t=None):
+    """RFC 6238 TOTP (SHA-1) from a base32 secret — for unattended login (no `input`)."""
+    s = re.sub(r"\s+", "", secret).upper()
+    s += "=" * (-len(s) % 8)
+    key = base64.b32decode(s)
+    counter = int((time.time() if t is None else t) // period)
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    off = digest[-1] & 0x0F
+    code = (struct.unpack(">I", digest[off:off + 4])[0] & 0x7FFFFFFF) % (10 ** digits)
+    return str(code).zfill(digits)
 
 API_BASE = "https://api.yeswehack.com"
 USER_AGENT = "yeswehack-programs-sync/1.0 (+Skills_bugbounty)"
@@ -94,7 +110,8 @@ def scope_sig(scope_list):
 # YesWeHack API client
 # --------------------------------------------------------------------------- #
 class YWHClient:
-    def __init__(self, token_path, public_only=False, throttle=0.3):
+    def __init__(self, token_path, public_only=False, throttle=0.3, non_interactive=False):
+        self.non_interactive = non_interactive
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": USER_AGENT, "Accept": "application/json"})
         self.token_path = token_path
@@ -130,10 +147,16 @@ class YWHClient:
         except Exception as e:
             log(f"[auth] Warning: could not cache token: {e}")
 
-    @staticmethod
-    def _credentials():
-        email = os.environ.get("YWH_EMAIL") or input("YesWeHack email: ").strip()
-        password = os.environ.get("YWH_PASSWORD") or getpass.getpass("YesWeHack password: ")
+    def _credentials(self):
+        email = os.environ.get("YWH_EMAIL")
+        password = os.environ.get("YWH_PASSWORD")
+        if self.non_interactive:
+            if not email or not password:
+                raise SystemExit("[auth] non-interactive: set YWH_EMAIL and YWH_PASSWORD "
+                                 "(or YWH_PAT, or use --public-only).")
+            return email, password
+        email = email or input("YesWeHack email: ").strip()
+        password = password or getpass.getpass("YesWeHack password: ")
         return email, password
 
     def _set_token(self, token):
@@ -142,6 +165,11 @@ class YWHClient:
 
     def authenticate(self, force_reauth=False):
         if self.public_only:
+            return
+        pat = os.environ.get("YWH_PAT")
+        if pat:  # personal access token → use directly, no login/TOTP (fully unattended)
+            log("[auth] Using YWH_PAT.")
+            self._set_token(pat.strip())
             return
         if not force_reauth:
             cached = self._load_cached_token()
@@ -161,7 +189,15 @@ class YWHClient:
         totp_token = data.get("totp_token")
 
         if not token and totp_token:
-            code = input("YesWeHack TOTP code: ").strip()
+            secret = os.environ.get("YWH_TOTP_SECRET")
+            if secret:
+                code = _totp_now(secret)
+                log("[auth] TOTP code generated from YWH_TOTP_SECRET.")
+            elif self.non_interactive:
+                raise SystemExit("[auth] 2FA required but no YWH_TOTP_SECRET set "
+                                 "(non-interactive). Set YWH_TOTP_SECRET or YWH_PAT.")
+            else:
+                code = input("YesWeHack TOTP code: ").strip()
             resp = self.session.post(
                 f"{API_BASE}/account/totp", json={"code": code, "token": totp_token}, timeout=30
             )
@@ -355,6 +391,9 @@ def parse_args():
     p.add_argument("--throttle", type=float, default=0.3, help="Seconds between detail calls (default 0.3).")
     p.add_argument("--limit", type=int, default=0, help="Only process the first N programs (testing).")
     p.add_argument("--re-auth", action="store_true", help="Ignore cached token; force fresh login + TOTP.")
+    p.add_argument("--non-interactive", action="store_true",
+                   help="Never prompt — require YWH_EMAIL/PASSWORD + YWH_TOTP_SECRET (or YWH_PAT). "
+                        "Auto-enabled when stdin is not a TTY.")
     return p.parse_args()
 
 
@@ -366,7 +405,9 @@ def main():
     token_path = out_dir / ".token.json"
 
     old_state = load_state(state_path)
-    client = YWHClient(token_path, public_only=args.public_only, throttle=args.throttle)
+    non_interactive = args.non_interactive or not sys.stdin.isatty()
+    client = YWHClient(token_path, public_only=args.public_only, throttle=args.throttle,
+                       non_interactive=non_interactive)
     client.authenticate(force_reauth=args.re_auth)
 
     programs = client.list_programs(page_size=args.page_size)
