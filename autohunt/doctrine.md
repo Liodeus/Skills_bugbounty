@@ -46,7 +46,7 @@ a correct, valuable outcome** — report it as `status: no_findings`. Specifical
 - **IDOR / BOLA / RBAC** → use a **second account** (only if creds are in `TARGET.md`) to read or
   act on the first account's resource. A 200 from your own session proves nothing.
 - **XSS (reflected/DOM)** → confirm **execution**, not reflection: run
-  `node autohunt/xss-confirm.js "<url-with-payload>" --nonce <NONCE>` (headless browser; it
+  `node "$AUTOHUNT_XSS_CONFIRM" "<url-with-payload>" --nonce <NONCE>` (headless browser; it
   reports whether `alert(NONCE)` fired). If you can't run it, the lead is `needs_browser`.
 - **Blind/stored XSS** → OOB callback in the payload observed firing (`/bxss` skill).
 - **Secret/key in JS** → make ONE benign authenticated call proving the key is live.

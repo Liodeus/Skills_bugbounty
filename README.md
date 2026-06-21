@@ -1,0 +1,165 @@
+# Skills_bugbounty — autonomous YesWeHack hunting toolkit
+
+A bug-bounty toolkit for **YesWeHack** built around Claude Code. It can run two ways:
+
+- **Autonomous auto-loop** (`autohunt`) — pulls your program catalog, then walks it with a
+  **planner** agent that inspects each target and dispatches specialized subagents *intelligently*,
+  proves findings before reporting, notifies Discord, and tracks resumable state. A read-only web
+  dashboard visualizes everything.
+- **Manual mode** (`hunt.sh`) — spins up Caido + a browser proxy and drops you into an interactive
+  Claude session with the same hunting **skills** (`/idor`, `/xss`, `/ssrf`, …).
+
+> ⚠️ **Authorized use only.** Run this only against programs you're authorized to test (your YWH
+> scope). It never auto-submits reports — a human reviews and submits. See **Safety** below.
+
+---
+
+## Architecture
+
+```
+yeswehack_programs.py        →  data/yeswehack/<slug>/{program.md, scope.md, raw.json}
+  (catalog scraper)             + INDEX.md, state.json, CHANGES.md
+
+autohunt.py  (the auto-loop, per program)
+  ┌─ planner  (one `claude -p`, reads memory + scope)
+  │     ├─ dispatches  recon   subagent   (passive surface map)        ← only what's
+  │     ├─ dispatches  hunter  subagent(s) (prove ONE lead each)         warranted
+  │     └─ aggregates → findings[] + leads[]
+  ├─ refuter   (independent `claude -p`, strong model — drops false positives)
+  ├─ scope + RATE firewall hook  (governs the planner AND all subagents)
+  ├─ persistent memory  data/hunts/<slug>/memory/knowledge.json  (compounds across runs)
+  └─ Discord + ledger + cost report
+        → data/hunts/{ledger.jsonl, status.json, findings_index.json, alerts.jsonl, cost_report.md}
+
+autohunt/web/server.py       →  read-only dashboard at http://127.0.0.1:8675 (live SSE)
+```
+
+The auto-loop is **precision-first**: a finding is only reported if exploitation was *executed*
+against a concrete oracle (SSRF→OOB hit, IDOR→second account crosses the boundary, XSS→JS actually
+fires, …) and survives an independent refuter. Everything unproven is surfaced as a **lead** for you.
+
+---
+
+## Quickstart
+
+```bash
+# 1. Install the toolchain (Go recon tools, Playwright, mitmproxy, jq) — one time.
+./install_tools.sh                 # ./install_tools.sh --check to just see what's present
+pip install -r requirements.txt    # requests (scraper/orchestrator)
+
+# 2. Credentials + notifications (env)
+export YWH_EMAIL=you@example.com
+export YWH_PASSWORD=...             # TOTP is prompted interactively if 2FA is on
+export DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...   # optional but recommended
+
+# 3. Kick off everything: refresh catalog → run the auto-loop
+./run.sh --bbp-only -- --max-budget-usd 5 --max-total-usd 50 --oob your.canary.host
+
+# …or step by step:
+python yeswehack_programs.py            # build data/yeswehack/  (--public-only to skip login)
+python autohunt.py --dry-run            # preview the prioritized queue (no spend)
+python autohunt.py --mode planner --bbp-only --max-budget-usd 5 --oob your.canary.host
+
+# 4. Watch it live (read-only dashboard)
+pip install -r autohunt/web/requirements.txt        # first time (or use autohunt/web/.venv)
+python autohunt/web/server.py --data-dir data       # http://127.0.0.1:8675
+```
+
+**Kill-switch:** `touch data/hunts/STOP` halts the loop before the next program.
+
+---
+
+## How the auto-loop works (intelligent dispatch)
+
+Per program, one **planner** `claude -p` session:
+
+1. **Reads memory** (`knowledge.json`) — prior recon, open leads, already-ruled-out items, past
+   findings — so each run builds on the last instead of starting blind.
+2. **Inspects** the surface (light probing / the `recon` subagent for wildcard expansion + JS/endpoint
+   mining). On a thin surface it correctly **stops** (`no_findings`) rather than manufacturing work.
+3. **Decides and dispatches** `hunter` subagents *only* for the few highest-impact, provable leads —
+   in small batches to stay quiet. Each hunter proves exactly one lead against its oracle.
+4. **Verifies** each candidate with an **independent refuter** (a separate strong-model session) and
+   **dedupes** across runs before anything is reported.
+5. **Records** everything: report `.md` per verified finding, Discord push (findings + a tagged
+   digest of unverified leads), ledger row with per-model cost, and updated memory.
+
+**Modes & key flags**
+
+| Flag | Meaning |
+|---|---|
+| `--mode planner` (default) | Planner dispatches `recon`/`hunter` subagents. `--mode single` = one monolithic agent. |
+| `--monitor` | Re-probe known surface for changes → triage agent → Discord alert (no hunting). |
+| `--program <slug>` / `--limit N` / `--only-changed` / `--bbp-only` | Pick & scope the queue. |
+| `--max-budget-usd` / `--max-total-usd` / `--max-turns` / `--timeout` | Budget & time caps. |
+| `--max-rps` (8) / `--max-conc` (10) | **Enforced** scan-tool rate/concurrency caps (anti-IPS). |
+| `--model` / `--verify-model` | Planner/hunter model vs the refuter model. |
+| `--capture mitmdump` | Record traffic through a proxy for later human replay. |
+| `--oob <host>` | OOB canary host for SSRF/blind oracles (also added to the safe-host allowlist). |
+
+---
+
+## Safety
+
+- **Authorized engagements only**; **no auto-submission** to YesWeHack (you review + submit).
+- **Scope firewall** (a `PreToolUse` hook) blocks any tool call touching an out-of-scope host —
+  enforced even under `--dangerously-skip-permissions`, and for subagent calls too.
+- **Rate firewall** (same hook) denies scan tools (`ffuf`/`httpx`/`nuclei`/`katana`/…) that don't
+  carry a rate/concurrency cap, and blocks flood patterns — so the loop won't trip a WAF/IPS.
+- **Budget caps** per target and globally; a `data/hunts/STOP` **kill-switch**.
+- Inherited guardrails (doctrine): ≤8 req/s, no DoS, no mass enumeration, no destructive actions
+  without a safe revert, WAF-detected → stop.
+
+---
+
+## Configuration (env)
+
+| Var | Purpose |
+|---|---|
+| `YWH_EMAIL`, `YWH_PASSWORD` | Catalog auth (else prompted); TOTP prompted at runtime. |
+| `DISCORD_WEBHOOK_URL` | Finding / lead / monitor notifications (skipped if unset). |
+| `PYTHON` | Override the python interpreter `run.sh` uses (default `python3`). |
+
+Optional per-program credentials for authed IDOR/RBAC testing: `data/creds/<slug>.json` (the hunter
+uses them if present; default is unauthenticated surface).
+
+## Outputs (`data/`, gitignored)
+
+```
+data/yeswehack/<slug>/{program.md,scope.md,raw.json}   # catalog (+ INDEX.md, state.json, CHANGES.md)
+data/hunts/<slug>/
+    CLAUDE.md, TARGET.md, .claude/{skills,agents,settings.json}
+    memory/knowledge.json        # recon, leads, tested-ruled-out, findings, monitor baseline
+    report_<class>_<slug>_<date>.md
+data/hunts/{ledger.jsonl, status.json, findings_index.json, alerts.jsonl, cost_report.md, run.log, STOP}
+```
+
+## Components
+
+| Path | Purpose |
+|---|---|
+| `yeswehack_programs.py` | Catalog scraper (login+TOTP, incremental, change log). |
+| `autohunt.py` | The auto-loop orchestrator (planner/single/monitor). |
+| `autohunt/scope_firewall.py` | `PreToolUse` scope + rate firewall hook. |
+| `autohunt/doctrine.md` | Autonomous hunting doctrine (copied to each workspace `CLAUDE.md`). |
+| `autohunt/agents/planner.md`, `agents/subagents/{recon,hunter}.md` | Planner prompt + native subagents. |
+| `autohunt/verifier.md`, `agents/monitor-triage.md` | Refuter + change-triage prompts. |
+| `autohunt/schemas/*.json`, `autohunt/findings.schema.json` | Structured-output contracts. |
+| `autohunt/xss-confirm.js` | Headless-browser XSS execution oracle. |
+| `autohunt/web/` | Read-only real-time dashboard (FastAPI + vanilla JS). |
+| `install_tools.sh` | Installs the recon/browser/proxy toolchain. |
+| `run.sh` | One-command launcher (catalog refresh → auto-loop). |
+| `hunt.sh`, `playwright-chrome/`, `SKILLS/` | Manual Caido/browser mode + the technique skill library. |
+
+## Troubleshooting
+
+- **"recon tools missing"** — run `./install_tools.sh` (then open a new shell for the Go PATH). The
+  loop still runs without them but with degraded discovery.
+- **No Discord messages** — set `DISCORD_WEBHOOK_URL` and `pip install requests`.
+- **Dashboard empty** — point `--data-dir` at the dir holding `yeswehack/` + `hunts/`.
+
+## Manual mode
+
+`hunt.sh <target>` boots Caido (`:8080`) + a Playwright/mitmproxy harness, builds a per-target
+workspace from `SKILLS/CLAUDE.md` + the skills, and drops you into interactive `claude`. See
+`SKILLS/` for the technique playbooks and `SKILLS/report-yeswehack` for report formatting.

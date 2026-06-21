@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
-"""autohunt — autonomous YesWeHack hunting loop (v2).
+"""autohunt — autonomous YesWeHack hunting loop.
 
-Walks the local program catalog (produced by yeswehack_programs.py) and, per program, runs a
-pipeline of SPECIALIZED headless `claude -p` agents (recon → leads → per-lead hunters), gates
-every finding behind executed proof-of-exploitation plus an independent refuter, writes reports,
-pushes findings + unverified leads to Discord, and records resumable status. Each program keeps a
-persistent memory (a "mapper"/brain-dump) so runs compound instead of starting blind.
+Walks the local program catalog (produced by yeswehack_programs.py) and, per program, runs ONE
+headless `claude -p` PLANNER that inspects the surface, then dispatches native Claude Code
+subagents (recon, hunter) only where warranted — rather than brute-forcing a fixed pipeline.
+Every finding is gated behind executed proof-of-exploitation plus an independent refuter; reports
+are written locally, findings + unverified leads pushed to Discord, and resumable status recorded.
+Each program keeps a persistent memory (a "mapper"/brain-dump) so runs compound instead of starting
+blind. `--mode single` runs one monolithic agent instead of the planner.
 
 A `--monitor` mode re-probes known surface for changes and asks a triage agent whether a change
 warrants a human look (alert only — no auto-hunt).
 
-Design follows Fahad Faisal's "AI Agents in Bug Bounty": specialized agents (not one big prompt),
-persistent memory, change-detection, and hard anti-slop discipline (prove it or drop it).
+Design follows Fahad Faisal's "AI Agents in Bug Bounty": a planner with specialized subagents (not
+one big prompt), persistent memory, change-detection, and hard anti-slop discipline (prove it or
+drop it).
 
-Safety: per-target + per-phase budget caps, --max-total-usd global cap, a data/hunts/STOP
-kill-switch, and a PreToolUse scope-firewall hook that blocks out-of-scope hosts even under
---dangerously-skip-permissions. No reports are auto-submitted to YWH.
+Safety: per-target + global budget caps, a data/hunts/STOP kill-switch, and a PreToolUse firewall
+hook that blocks out-of-scope hosts AND enforces scan-tool rate/concurrency caps (even under
+--dangerously-skip-permissions, and for subagent tool calls too). No reports are auto-submitted.
 
 Examples:
   python autohunt.py --dry-run
-  python autohunt.py --program acme --mode pipeline --max-leads 3 --max-budget-usd 4
-  python autohunt.py --only-changed --model sonnet --verify-model opus
+  python autohunt.py --program acme --mode planner --max-budget-usd 4 --model sonnet
+  python autohunt.py --only-changed --model opus --verify-model opus --oob your.canary.host
   python autohunt.py --monitor                      # change-detection pass (schedule via cron/loop)
 """
 
@@ -57,7 +60,7 @@ FINDINGS_SCHEMA = AUTOHUNT / "findings.schema.json"
 WEB_TYPES = {"web-application", "api", ""}  # "" = bare-string scope with no type → treat as web
 HOST_RE = re.compile(r"^\*?\.?(?:[a-z0-9_-]+\.)+[a-z]{2,}$")
 IP_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
-RECON_KEYS = ("live_hosts", "endpoints", "js_files", "params", "tech")
+RECON_KEYS = ("live_hosts", "endpoints", "js_files", "params", "tech", "suggested_focus")
 
 VERIFIER_SCHEMA = json.dumps({
     "type": "object", "additionalProperties": False,
@@ -388,6 +391,7 @@ def hunter_env(allow, out_hosts, args, capture_env):
     env["AUTOHUNT_OUT_OF_SCOPE"] = " ".join(out_hosts)
     env["AUTOHUNT_MAX_RPS"] = str(args.max_rps)
     env["AUTOHUNT_MAX_CONC"] = str(args.max_conc)
+    env["AUTOHUNT_XSS_CONFIRM"] = str((AUTOHUNT / "xss-confirm.js").resolve())
     if args.oob:
         env["AUTOHUNT_OOB"] = args.oob
         env["AUTOHUNT_SAFE_HOSTS"] = args.oob

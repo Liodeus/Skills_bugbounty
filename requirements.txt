@@ -1,0 +1,3 @@
+# Core deps for the catalog scraper + autohunt orchestrator.
+# (The web dashboard has its own deps in autohunt/web/requirements.txt.)
+requests>=2.25

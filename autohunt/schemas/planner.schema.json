@@ -15,7 +15,8 @@
         "endpoints": { "type": "array", "items": { "type": "string" } },
         "js_files": { "type": "array", "items": { "type": "string" } },
         "params": { "type": "array", "items": { "type": "string" } },
-        "tech": { "type": "array", "items": { "type": "string" } }
+        "tech": { "type": "array", "items": { "type": "string" } },
+        "suggested_focus": { "type": "array", "items": { "type": "string" } }
       }
     },
     "findings": {
@@ -50,6 +51,8 @@
           "vuln_class": { "type": "string" },
           "asset": { "type": "string" },
           "endpoint": { "type": "string" },
+          "priority": { "type": "string", "enum": ["high", "medium", "low"] },
+          "why": { "type": "string", "description": "The signal that makes this worth a manual look." },
           "why_unproven": { "type": "string" }
         }
       }

@@ -43,6 +43,10 @@
         "required": ["title", "why_unproven"],
         "properties": {
           "title": { "type": "string" },
+          "vuln_class": { "type": "string" },
+          "asset": { "type": "string" },
+          "endpoint": { "type": "string" },
+          "priority": { "type": "string", "enum": ["high", "medium", "low"] },
           "why_unproven": { "type": "string", "description": "What's missing to prove it (needs creds, needs browser, WAF blocked, not reproducible, etc.)." }
         }
       }

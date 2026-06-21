@@ -15,7 +15,7 @@ Process:
    scope: `verified=false`, `why_unproven="endpoint does not exist / not reachable"`. Stop.
 2. **Minimal PoC → execute the oracle** for the class (SSRF→OOB hit, SQLi→boolean/time differential
    or extracted marker, RCE/cmdi→unique marker, IDOR/RBAC→second account crosses the boundary,
-   XSS→`node autohunt/xss-confirm.js "<url>" --nonce <N>`, secret→one benign live call). **Replay** to
+   XSS→`node "$AUTOHUNT_XSS_CONFIRM" "<url>" --nonce <N>`, secret→one benign live call). **Replay** to
    confirm reproducibility.
 3. Decide honestly:
    - **Proven:** `verified=true` with `oracle`, `evidence`, `severity`, `dedupe_key`; write a

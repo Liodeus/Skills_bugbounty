@@ -22,7 +22,7 @@ hosts — stay in scope). The skills in `.claude/skills/` are available.
 
 1. **First confirm it even exists.** Issue the request yourself and read the real response — does
    the endpoint/parameter/behavior actually exist and respond as claimed? If not, it's refuted.
-2. Re-run the PoC from the evidence yourself (curl/httpx, or `node autohunt/xss-confirm.js` for XSS).
+2. Re-run the PoC from the evidence yourself (curl/httpx, or `node "$AUTOHUNT_XSS_CONFIRM"` for XSS).
 3. Apply the correct oracle for the class:
    - SSRF → does the OOB hit actually fire / metadata actually return?
    - SQLi → is the boolean/time differential real and stable (not network jitter)?
