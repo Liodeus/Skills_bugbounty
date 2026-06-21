@@ -68,12 +68,12 @@ def host_matches(host, pattern):
 def extract_hosts(command):
     """Best-effort: pull candidate target hosts/IPs out of a shell command."""
     hosts = set()
-    # 1) Full URLs
-    for m in re.finditer(r"https?://([^\s/'\"|>)\\]+)", command):
+    # 1) Full URLs (exclude shell metachars so `curl https://x; echo` doesn't grab "x;")
+    for m in re.finditer(r"https?://([^\s/'\"|>);&`]+)", command):
         hosts.add(m.group(1))
     # 2) Common target flags: -u/-d/--url/--host/--target/--domain <value>
     for m in re.finditer(
-        r"(?:--url|--host|--target|--domain|-u|-d|-H(?=\s+Host))\s+['\"]?([^\s'\"|>)\\]+)",
+        r"(?:--url|--host|--target|--domain|-u|-d|-H(?=\s+Host))\s+['\"]?([^\s'\"|>);&`]+)",
         command,
     ):
         hosts.add(m.group(1))
@@ -87,6 +87,7 @@ def extract_hosts(command):
     for h in hosts:
         h = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", h)
         h = h.split("/")[0].split("@")[-1].strip("[]")
+        h = h.rstrip(";&|`'\")")  # strip trailing shell metachars (defense-in-depth)
         h = h.rsplit(":", 1)[0] if h.count(":") == 1 and not h.startswith("[") else h
         h = h.lower().rstrip(".")
         if not h or h in NOISE:
@@ -161,8 +162,8 @@ def flood_violation(command, max_conc):
     m = re.search(r"xargs\b[^|;]*?-P\s*=?\s*(\d+)", command)
     if m and int(m.group(1)) > max_conc:
         return f"`xargs -P {m.group(1)}` exceeds the concurrency cap {int(max_conc)}."
-    if re.search(r"\bwhile\s+(true|:)\b", command):
-        return "unbounded `while true` loop is not allowed (DoS/rate risk)."
+    if re.search(r"\bwhile\s+(true|:)(\s|;|$)", command) or re.search(r"\buntil\s+false\b", command):
+        return "unbounded loop (`while true` / `while :` / `until false`) is not allowed (DoS/rate risk)."
     for m in re.finditer(r"\bseq\b([^;|&\n]*)", command):
         nums = [int(x) for x in re.findall(r"\d+", m.group(1))]
         if nums and max(nums) > 1000:

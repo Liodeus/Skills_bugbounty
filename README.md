@@ -116,10 +116,16 @@ Per program, one **planner** `claude -p` session:
 ## Safety
 
 - **Authorized engagements only**; **no auto-submission** to YesWeHack (you review + submit).
-- **Scope firewall** (a `PreToolUse` hook) blocks any tool call touching an out-of-scope host —
-  enforced even under `--dangerously-skip-permissions`, and for subagent calls too.
-- **Rate firewall** (same hook) denies scan tools (`ffuf`/`httpx`/`nuclei`/`katana`/…) that don't
-  carry a rate/concurrency cap, and blocks flood patterns — so the loop won't trip a WAF/IPS.
+- **Scope firewall** (a `PreToolUse` hook) blocks **shell/Bash network tool calls** (curl, httpx,
+  ffuf, nuclei, …) to any out-of-scope host — enforced even under `--dangerously-skip-permissions`
+  and for subagent calls. The built-in `WebFetch`/`WebSearch` tools are **disabled** so Bash is the
+  only network path. (Loopback/private IPs and `169.254.169.254` are intentionally allowed — the
+  request originates from the in-scope target, which is how the SSRF/metadata oracle is proven.)
+- **Rate firewall** (same hook) denies the common scan tools (`ffuf`/`httpx`/`nuclei`/`katana`/
+  `dnsx`/`gobuster`/`feroxbuster`/`wfuzz`/`masscan`/`nmap`) that don't carry a rate/concurrency cap,
+  and blocks flood patterns (`while true`/`while :`/`until false`, huge `seq`/brace ranges,
+  `xargs -P`) — so the loop won't trip a WAF/IPS. For any other tool, the doctrine's ≤8 req/s rule
+  (and the optional `--rate-proxy`) applies.
 - **Budget caps** per target and globally; a `data/hunts/STOP` **kill-switch**.
 - Inherited guardrails (doctrine): ≤8 req/s, no DoS, no mass enumeration, no destructive actions
   without a safe revert, WAF-detected → stop.

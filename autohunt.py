@@ -461,6 +461,9 @@ def stop_capture(proc):
 def run_claude(prompt, schema, ws, env, args, max_turns, max_budget, model=None):
     cmd = ["claude", "-p", prompt,
            "--add-dir", str(SKILLS),
+           # Remove the built-in network tools so the firewalled Bash (curl/httpx/…) is the ONLY
+           # network path — WebFetch/WebSearch would otherwise reach arbitrary hosts unscoped.
+           "--disallowedTools", "WebFetch", "WebSearch",
            "--settings", str(ws / ".claude" / "settings.json"),
            "--permission-mode", args.permission_mode,
            "--max-turns", str(max_turns),
