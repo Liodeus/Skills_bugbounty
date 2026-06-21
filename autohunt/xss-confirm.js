@@ -95,8 +95,11 @@ async function main() {
       const hooked = await page.evaluate(() => {
         const x = window.__xss;
         if (!x) return null;
+        // Drop records from Playwright's own evaluate machinery (it routes through eval/Function,
+        // which the instrument hooks) so only the page's real sink writes remain.
+        const clean = (a) => (a || []).filter((r) => !/UtilityScript|pwInitScripts|__playwright/i.test(r.stack || ''));
         return {
-          sinks: (x.sinks || []).slice(0, 50), taint: (x.taint || []).slice(0, 50),
+          sinks: clean(x.sinks).slice(0, 50), taint: clean(x.taint).slice(0, 50),
           listeners: (x.listeners || []).slice(0, 20), csp: (x.csp || []).slice(0, 20),
         };
       });

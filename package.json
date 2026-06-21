@@ -1,0 +1,26 @@
+{
+  "name": "skills_bugbounty",
+  "version": "1.0.0",
+  "description": "A bug-bounty toolkit for **YesWeHack** built around Claude Code. It can run two ways:",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Liodeus/Skills_bugbounty.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Liodeus/Skills_bugbounty/issues"
+  },
+  "homepage": "https://github.com/Liodeus/Skills_bugbounty#readme",
+  "dependencies": {
+    "playwright": "^1.61.0"
+  }
+}

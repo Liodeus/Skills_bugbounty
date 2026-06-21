@@ -76,6 +76,12 @@ VERIFIER_SCHEMA = json.dumps({
 RECON_TOOLS = ["subfinder", "httpx", "katana", "nuclei", "ffuf", "dnsx", "jq", "node"]
 NO_PROXY = "localhost,127.0.0.1,::1,.anthropic.com,api.anthropic.com,.claude.com,statsig.anthropic.com,sentry.io"
 
+# Make user-local tool dirs visible to this process AND child claude -p sessions, even when the
+# launching shell didn't add them (cron/nohup/non-login shells). install_tools.sh drops binaries here.
+for _bindir in (str(Path.home() / ".local" / "bin"), str(Path.home() / "go" / "bin")):
+    if os.path.isdir(_bindir) and _bindir not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = _bindir + os.pathsep + os.environ.get("PATH", "")
+
 
 # --------------------------------------------------------------------------- #
 # helpers

@@ -21,6 +21,7 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")" && pwd)"
 cd "$REPO"
 [ -f "$REPO/.env" ] && { set -a; . "$REPO/.env"; set +a; }   # auto-load .env if present
+export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"            # recon tools / mitmproxy install here
 PY="${PYTHON:-python3}"
 
 PUBLIC_ONLY=0; NO_REFRESH=0; MONITOR=0; DASHBOARD=0; EVERY=0; PASS=()
