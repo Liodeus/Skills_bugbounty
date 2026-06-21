@@ -12,6 +12,8 @@ const shortTime = (s) => (s ? String(s).replace("T", " ").replace("Z", "").slice
 const sevChip = (s) => `<span class="chip sev-${esc(s)}">${esc(s)}</span>`;
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 async function api(p) { const r = await fetch(p); if (!r.ok) throw new Error(p + " → " + r.status); return r.json(); }
+async function post(p, body) { const r = await fetch(p, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }); if (!r.ok) throw new Error(p + " → " + r.status); return r.json(); }
+let CONFIG = { read_only: true, stop: false };  // populated from /api/config at startup
 
 /* ---- transient UI state that survives live refresh ---- */
 const ST = { filters: {}, sort: {}, tab: {} };
@@ -87,6 +89,7 @@ function setCount(n, total) { const c = $("#cnt"); if (c) c.textContent = total 
 /* ---- views ---- */
 async function vOverview() {
   const [o, mat] = await Promise.all([api("/api/overview"), api("/api/severity-matrix")]);
+  updateStopBtn(o.stop);
   const sev = o.findings_by_severity || {};
   const cards = [
     ["Programs", `${o.programs_hunted}/${o.programs_total}`, "hunted / total"],
@@ -138,14 +141,16 @@ async function vProgram(slug) {
   catch { view.innerHTML = `<div class="empty">program not found</div>`; return; }
   const tabs = ["Overview", "Scope", "Recon", "Leads", "Findings", "Runs", "Monitor"];
   const cur = ST.tab[slug] && tabs.includes(ST.tab[slug]) ? ST.tab[slug] : "Overview";
-  view.innerHTML = `<div class="tabs" role="tablist">${tabs.map((t) => `<button data-t="${t}" class="${t === cur ? "active" : ""}" role="tab" aria-selected="${t === cur}">${t}</button>`).join("")}</div><div id="tabc"></div>`;
+  const rehuntBtn = CONFIG.read_only ? "" :
+    `<button class="tbtn" style="margin-bottom:10px" onclick="rehunt('${esc(slug)}');return false">↻ Queue re-hunt</button>`;
+  view.innerHTML = rehuntBtn + `<div class="tabs" role="tablist">${tabs.map((t) => `<button data-t="${t}" class="${t === cur ? "active" : ""}" role="tab" aria-selected="${t === cur}">${t}</button>`).join("")}</div><div id="tabc"></div>`;
   const c = $("#tabc");
   const draw = (t) => {
     ST.tab[slug] = t;
     if (t === "Overview") c.innerHTML = `<div class="panel md">${d.program_html || "<div class='empty'>no description</div>"}</div>`;
     else if (t === "Scope") c.innerHTML = scopeTbl("In scope", d.scopes, true) + scopeTbl("Out of scope", d.out_of_scope, false);
     else if (t === "Recon") c.innerHTML = reconView(d.recon);
-    else if (t === "Leads") c.innerHTML = listView(d.leads, leadCols(false), "no leads recorded yet");
+    else if (t === "Leads") c.innerHTML = listView(d.leads, leadCols(false, slug), "no leads recorded yet");
     else if (t === "Findings") c.innerHTML = findingsView(d.findings);
     else if (t === "Runs") c.innerHTML = runsView(d.runs);
     else if (t === "Monitor") c.innerHTML = monitorView(d.monitor_baseline);
@@ -200,6 +205,15 @@ function leadCols(withProgram) {
     { key: "endpoint", label: "Endpoint", html: (r) => `<span class="mono">${esc(r.endpoint || "")}</span>` },
   ];
   if (withProgram) cols.push({ key: "slug", label: "Program", html: (r) => `<a href="#/program/${encodeURIComponent(r.slug)}">${esc(r.slug)}</a>` });
+  if (!CONFIG.read_only) cols.push({
+    key: "_act", label: "", html: (r) => {
+      const s = r.slug || slug, id = r.id;
+      if (!s || !id) return "—";
+      const next = r.status === "dismissed" ? "open" : "dismissed";
+      const lbl = r.status === "dismissed" ? "reopen" : "dismiss";
+      return `<button class="tbtn" onclick="leadAction('${esc(s)}','${esc(id)}','${next}');return false">${lbl}</button>`;
+    }
+  });
   return cols;
 }
 
@@ -291,6 +305,31 @@ function initStreams() {
   lg.onmessage = (e) => { let line; try { line = JSON.parse(e.data); } catch { line = e.data; } logBuf.push(line); if (logBuf.length > 1000) logBuf.shift(); renderLog(); renderFeed(); };
 }
 
+/* ---- triage actions (write; only when not read-only) ---- */
+window.leadAction = async (slug, id, status) => {
+  try { await post(`/api/leads/${encodeURIComponent(slug)}/${encodeURIComponent(id)}`, { status }); toast(`lead → ${status}`); render({ silent: true }); }
+  catch { toast("action failed", true); }
+};
+window.rehunt = async (slug) => {
+  try { await post(`/api/rehunt/${encodeURIComponent(slug)}`, {}); toast(`${slug} queued for re-hunt`); }
+  catch { toast("re-hunt failed", true); }
+};
+function updateStopBtn(stop) {
+  CONFIG.stop = !!stop;
+  const b = $("#stopbtn"); if (!b || CONFIG.read_only) return;
+  b.hidden = false;
+  b.textContent = stop ? "▶ Clear STOP" : "■ STOP";
+  b.setAttribute("aria-pressed", String(!!stop));
+}
+function setupStopBtn() {
+  const b = $("#stopbtn"); if (!b || CONFIG.read_only) return;
+  updateStopBtn(CONFIG.stop);
+  b.onclick = async () => {
+    try { const r = await post("/api/stop", { on: !CONFIG.stop }); updateStopBtn(r.stop); toast(r.stop ? "STOP set — loop will halt" : "STOP cleared"); }
+    catch { toast("failed", true); }
+  };
+}
+
 /* ---- router ---- */
 const ROUTES = { overview: vOverview, programs: vPrograms, program: vProgram, findings: vFindings, leads: vLeads, cost: vCost, changes: vChanges, log: vLog };
 async function render({ silent = false } = {}) {
@@ -318,6 +357,10 @@ $("#pause").onclick = () => {
   b.textContent = paused ? "▶ Paused" : "⏸ Live";
   if (!paused && pending) { pending = false; render({ silent: true }); }
 };
-if (!location.hash) location.hash = "#/overview";
-render();
-initStreams();
+(async () => {
+  try { CONFIG = await api("/api/config"); } catch { /* keep read-only default */ }
+  setupStopBtn();
+  if (!location.hash) location.hash = "#/overview";
+  render();
+  initStreams();
+})();

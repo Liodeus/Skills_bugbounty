@@ -11,6 +11,7 @@ any autohunt data directory.
 from __future__ import annotations
 
 import json
+import os
 from collections import defaultdict
 from pathlib import Path
 
@@ -318,3 +319,51 @@ class DataStore:
         if base.parent != self.hunts.resolve() or target.parent != base or not target.exists():
             return None
         return _md(_read_text(target))
+
+    # ---- triage actions (write) ---- #
+    @staticmethod
+    def _save(path: Path, obj):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False))
+        os.replace(tmp, path)
+
+    def set_lead_status(self, slug: str, lead_id: str, status: str) -> bool:
+        if _bad_slug(slug) or status not in ("open", "hunted", "reported", "dismissed"):
+            return False
+        kp = self.hunts / slug / "memory" / "knowledge.json"
+        k = _load_json(kp, None)
+        if not isinstance(k, dict):
+            return False
+        hit = False
+        for l in k.get("leads", []):
+            if l.get("id") == lead_id:
+                l["status"] = status
+                hit = True
+        if hit:
+            self._save(kp, k)
+            self._cache.pop("knowledge", None)
+        return hit
+
+    def stop_state(self) -> bool:
+        return (self.hunts / "STOP").exists()
+
+    def set_stop(self, on: bool) -> bool:
+        stop = self.hunts / "STOP"
+        if on:
+            stop.parent.mkdir(parents=True, exist_ok=True)
+            stop.write_text("stop\n")
+        elif stop.exists():
+            stop.unlink()
+        return self.stop_state()
+
+    def mark_rehunt(self, slug: str) -> bool:
+        if _bad_slug(slug):
+            return False
+        sp = self.hunts / "status.json"
+        st = _load_json(sp, {})
+        if slug not in st:
+            return False
+        st[slug]["status"] = "pending"  # build_queue re-queues anything not 'done'
+        self._save(sp, st)
+        return True

@@ -27,10 +27,17 @@ REPO = HERE.parents[1]
 
 app = FastAPI(title="autohunt dashboard")
 STORE: DataStore = None  # set in main()
+READ_ONLY = False        # set in main() via --read-only
 
 
 def store() -> DataStore:
     return STORE
+
+
+def _require_write():
+    if READ_ONLY:
+        return JSONResponse({"error": "read-only mode"}, status_code=403)
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -39,6 +46,11 @@ def store() -> DataStore:
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html")
+
+
+@app.get("/api/config")
+def api_config():
+    return {"read_only": READ_ONLY, "stop": store().stop_state()}
 
 
 # --------------------------------------------------------------------------- #
@@ -98,6 +110,42 @@ def api_report(slug: str, filename: str):
     if html is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     return JSONResponse({"slug": slug, "filename": filename, "html": html})
+
+
+# --------------------------------------------------------------------------- #
+# triage actions (write; disabled with --read-only)
+# --------------------------------------------------------------------------- #
+@app.post("/api/stop")
+async def api_stop(request: Request):
+    ro = _require_write()
+    if ro:
+        return ro
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return {"stop": store().set_stop(bool(body.get("on", True)))}
+
+
+@app.post("/api/rehunt/{slug}")
+def api_rehunt(slug: str):
+    ro = _require_write()
+    if ro:
+        return ro
+    return JSONResponse({"ok": store().mark_rehunt(slug)})
+
+
+@app.post("/api/leads/{slug}/{lead_id}")
+async def api_lead_status(slug: str, lead_id: str, request: Request):
+    ro = _require_write()
+    if ro:
+        return ro
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    ok = store().set_lead_status(slug, lead_id, body.get("status", "dismissed"))
+    return JSONResponse({"ok": ok}, status_code=200 if ok else 400)
 
 
 # --------------------------------------------------------------------------- #
@@ -163,13 +211,15 @@ app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 # --------------------------------------------------------------------------- #
 def main():
-    global STORE
-    ap = argparse.ArgumentParser(description="autohunt read-only web dashboard.")
+    global STORE, READ_ONLY
+    ap = argparse.ArgumentParser(description="autohunt web dashboard.")
     ap.add_argument("--data-dir", default=str(REPO / "data"), help="autohunt data/ dir to plug into.")
     ap.add_argument("--host", default="127.0.0.1", help="bind host (default localhost).")
     ap.add_argument("--port", type=int, default=8675)
+    ap.add_argument("--read-only", action="store_true", help="Disable triage write actions (view only).")
     args = ap.parse_args()
 
+    READ_ONLY = args.read_only
     STORE = DataStore(args.data_dir)
     if not STORE.root.exists():
         print(f"WARNING: data dir {STORE.root} does not exist yet — dashboard will be empty.", file=sys.stderr)

@@ -60,10 +60,13 @@ python yeswehack_programs.py            # build data/yeswehack/  (--public-only 
 python autohunt.py --dry-run            # preview the prioritized queue (no spend)
 python autohunt.py --mode planner --bbp-only --max-budget-usd 5 --oob your.canary.host
 
-# 4. Watch it live (read-only dashboard)
+# 4. Watch it live (dashboard) — live SSE; triage actions enabled (--read-only to disable)
 pip install -r autohunt/web/requirements.txt        # first time (or use autohunt/web/.venv)
 python autohunt/web/server.py --data-dir data       # http://127.0.0.1:8675
 ```
+
+From the dashboard you can also **triage**: toggle the STOP kill-switch, dismiss/reopen leads, and
+queue a program for re-hunt. Start it with `--read-only` to make it view-only.
 
 **Kill-switch:** `touch data/hunts/STOP` halts the loop before the next program.
 
@@ -109,7 +112,15 @@ Per program, one **planner** `claude -p` session:
 | `--max-rps` (8) / `--max-conc` (10) | **Enforced** scan-tool rate/concurrency caps (anti-IPS). |
 | `--model` / `--verify-model` | Planner/hunter vs refuter model — **default `sonnet`** (cheaper); pass `opus` for hard targets. |
 | `--capture mitmdump` | Record traffic through a proxy for later human replay. |
+| `--rate-proxy` | Route tool traffic through a mitmdump that hard-caps per-host req/s (true global ceiling). |
 | `--oob <host>` | OOB canary host for SSRF/blind oracles (also added to the safe-host allowlist). |
+| `--target <url> [--scope a,b]` | **Ad-hoc** mode — hunt an authorized URL not in the catalog (great for testing / one-offs). |
+| `--retry-failed` | Re-run only programs whose last status is `failed`. |
+| `--watch <secs>` | Repeat the run (hunt or `--monitor`) every N seconds until `data/hunts/STOP`. |
+| `--selftest [--dry-run]` | Preflight: readiness + firewall sanity (+ a benign live hunt unless `--dry-run`). |
+
+**Before your first real run:** `python autohunt.py --selftest` (or `--selftest --dry-run` for a
+no-spend static check) confirms tools, auth, schemas, and the firewall are all healthy.
 
 ---
 

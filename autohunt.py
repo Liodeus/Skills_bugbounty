@@ -419,39 +419,44 @@ def hunter_env(allow, out_hosts, args, capture_env):
 # --------------------------------------------------------------------------- #
 # capture layer (pluggable)
 # --------------------------------------------------------------------------- #
-def start_capture(mode, ws):
-    if mode == "none":
+def start_proxy(args, ws):
+    """Start ONE mitmdump if --capture mitmdump and/or --rate-proxy is set. Returns
+    (proc_or_None, env_dict); the agent's tools point HTTP(S)_PROXY at it. --rate-proxy adds
+    a per-host req/s throttle addon; --capture writes a replayable flow file."""
+    if args.capture == "caido":
+        log("capture=caido not yet wired (needs caido-cli + claim + PAT + CA); skipping capture.")
+    want_capture = args.capture == "mitmdump"
+    want_rate = getattr(args, "rate_proxy", False)
+    if not (want_capture or want_rate):
         return None, {}
-    if mode == "caido":
-        log("capture=caido not yet wired (needs caido-cli + claim + PAT + CA); running WITHOUT capture.")
+    if not shutil.which("mitmdump"):
+        log("mitmdump not on PATH — capture/rate-proxy disabled (run ./install_tools.sh).")
         return None, {}
-    if mode == "mitmdump":
-        if not shutil.which("mitmdump"):
-            log("capture=mitmdump but mitmdump not on PATH; running without capture.")
-            return None, {}
-        port = 8899
-        flow = ws / "traffic.flow"
-        proc = subprocess.Popen(
-            ["mitmdump", "--mode", "regular", "--listen-port", str(port), "-w", str(flow), "-q"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        ca = Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
-        for _ in range(25):
-            if ca.exists():
-                break
-            time.sleep(0.2)
-        env = {
-            "HTTP_PROXY": f"http://127.0.0.1:{port}", "HTTPS_PROXY": f"http://127.0.0.1:{port}",
-            "http_proxy": f"http://127.0.0.1:{port}", "https_proxy": f"http://127.0.0.1:{port}",
-            "NO_PROXY": NO_PROXY, "no_proxy": NO_PROXY,
-        }
+    port = 8899
+    cmd = ["mitmdump", "--mode", "regular", "--listen-port", str(port), "-q"]
+    if want_capture:
+        cmd += ["-w", str(ws / "traffic.flow")]
+    proc_env = os.environ.copy()
+    if want_rate:
+        cmd += ["-s", str((AUTOHUNT / "rate_proxy.py").resolve())]
+        proc_env["AUTOHUNT_MAX_RPS"] = str(args.max_rps)  # the addon reads this
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=proc_env)
+    ca = Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
+    for _ in range(25):
         if ca.exists():
-            env["CURL_CA_BUNDLE"] = str(ca)
-            env["REQUESTS_CA_BUNDLE"] = str(ca)
-            env["NODE_EXTRA_CA_CERTS"] = str(ca)
-        log(f"capture=mitmdump on :{port} → {flow}")
-        return proc, env
-    return None, {}
+            break
+        time.sleep(0.2)
+    env = {
+        "HTTP_PROXY": f"http://127.0.0.1:{port}", "HTTPS_PROXY": f"http://127.0.0.1:{port}",
+        "http_proxy": f"http://127.0.0.1:{port}", "https_proxy": f"http://127.0.0.1:{port}",
+        "NO_PROXY": NO_PROXY, "no_proxy": NO_PROXY,
+    }
+    if ca.exists():
+        env["CURL_CA_BUNDLE"] = str(ca)
+        env["REQUESTS_CA_BUNDLE"] = str(ca)
+        env["NODE_EXTRA_CA_CERTS"] = str(ca)
+    log(f"proxy on :{port}" + (" [capture]" if want_capture else "") + (" [rate-throttle]" if want_rate else ""))
+    return proc, env
 
 
 def stop_capture(proc):
@@ -855,7 +860,33 @@ def parse_args():
     ap.add_argument("--max-rps", type=float, default=8, help="Enforced max request-rate flag for scan tools.")
     ap.add_argument("--max-conc", type=float, default=10, help="Enforced max concurrency/threads flag for scan tools.")
     ap.add_argument("--oob", help="OOB canary host for SSRF/blind oracles.")
+    # --- ad-hoc / ops functionalities ---
+    ap.add_argument("--target", help="Hunt an arbitrary authorized URL NOT in the catalog (ad-hoc mode).")
+    ap.add_argument("--scope", help="Comma-separated in-scope hosts for --target (default: the target's host).")
+    ap.add_argument("--retry-failed", action="store_true", help="Re-run only programs whose last status is failed.")
+    ap.add_argument("--watch", type=int, default=0, metavar="SECONDS",
+                    help="Repeat the run (hunt or --monitor) every N seconds until data/hunts/STOP.")
+    ap.add_argument("--rate-proxy", action="store_true",
+                    help="Route tool traffic through a mitmdump that hard-caps per-host req/s (true global rate ceiling).")
+    ap.add_argument("--selftest", action="store_true",
+                    help="Preflight: readiness report + firewall sanity + a benign live hunt (use with --dry-run for static-only).")
     return ap.parse_args()
+
+
+def synthetic_program(target, scope_csv):
+    """Build an in-memory program for ad-hoc `--target` runs (no catalog entry)."""
+    host = extract_host(target) or (target or "target")
+    if scope_csv:
+        assets = [{"scope": s.strip(), "scope_type": "web-application", "asset_value": ""}
+                  for s in scope_csv.split(",") if s.strip()]
+    else:
+        assets = [{"scope": target, "scope_type": "web-application", "asset_value": ""}]
+    slug = "adhoc-" + re.sub(r"[^a-z0-9.-]+", "-", host.lower()).strip("-")
+    p = {"slug": slug, "title": f"ad-hoc: {target}", "type": "adhoc", "kind": "",
+         "bounty": False, "bounty_max": 0, "disabled": False, "archived": False,
+         "last_update_at": None, "in_assets": assets, "out_assets": []}
+    p["_scope_hash"] = scope_hash(p)
+    return p
 
 
 def build_queue(programs, status, args):
@@ -864,6 +895,10 @@ def build_queue(programs, status, args):
         if args.program and p["slug"] != args.program:
             continue
         rec = status.get(p["slug"])
+        if args.retry_failed:  # only re-run prior failures
+            if rec and rec.get("status") == "failed":
+                q.append(p)
+            continue
         changed = (rec is None) or (rec.get("scope_hash") != p["_scope_hash"])
         if args.only_changed and not changed:
             continue
@@ -875,19 +910,19 @@ def build_queue(programs, status, args):
     return q
 
 
-def main():
-    args = parse_args()
-    check_prereqs(args)
+def run_once(args):
     HUNTS.mkdir(parents=True, exist_ok=True)
-    programs = prioritize(load_catalog(), args)
-
-    if args.monitor:
-        monitor_pass(programs, args)
-        return
+    if args.target:                       # ad-hoc: hunt a URL not in the catalog
+        programs = [synthetic_program(args.target, args.scope)]
+    else:
+        programs = prioritize(load_catalog(), args)
+        if args.monitor:
+            monitor_pass(programs, args)
+            return
 
     status = load_json(HUNTS / "status.json", {})
     index = load_json(HUNTS / "findings_index.json", {})
-    queue = build_queue(programs, status, args)
+    queue = programs if args.target else build_queue(programs, status, args)
 
     if not queue:
         print("Queue is empty (nothing new/changed, or all done). Use --rescan to force.")
@@ -929,7 +964,7 @@ def main():
 
         ws = setup_workspace(p, allow, seeds, out_hosts, args)
         mem = load_memory(ws)
-        cap_proc, cap_env = start_capture(args.capture, ws)
+        cap_proc, cap_env = start_proxy(args, ws)
         env = hunter_env(allow, out_hosts, args, cap_env)
         record = {"slug": p["slug"], "started_at": now_iso(), "scope_hash": p["_scope_hash"],
                   "mode": args.mode, "model": args.model}
@@ -1009,6 +1044,81 @@ def main():
     write_cost_report(rc)
     log(f"Run complete. ~${total_cost:.2f} total. Cost report: {HUNTS / 'cost_report.md'}")
     discord_send(content=f"✅ autohunt complete — ~${total_cost:.2f}. See cost_report.md.")
+
+
+def run_selftest(args):
+    """Preflight: readiness report + firewall sanity, then a benign live hunt (unless --dry-run)."""
+    ok = True
+    print("=== autohunt self-test ===")
+    print(f"  claude CLI ........ {'ok' if shutil.which('claude') else 'MISSING (required)'}")
+    ok = ok and bool(shutil.which("claude"))
+    miss = [t for t in RECON_TOOLS if not shutil.which(t)]
+    print(f"  recon tools ....... {'all present' if not miss else 'missing: ' + ', '.join(miss) + ' (degraded — ./install_tools.sh)'}")
+    print(f"  subscription login. {'ok' if _subscription_logged_in() else 'NOT logged in (run claude /login, or --use-api)'}")
+    print(f"  discord webhook ... {'set' if os.environ.get('DISCORD_WEBHOOK_URL') else 'unset (notifications skipped)'}")
+    for s in (FINDINGS_SCHEMA, SCHEMAS / "planner.schema.json", SCHEMAS / "monitor.schema.json"):
+        try:
+            json.loads(s.read_text()); print(f"  schema {s.name:24} ok")
+        except Exception as e:
+            print(f"  schema {s.name:24} BAD ({e})"); ok = False
+
+    def fw(cmd, extra):
+        env = {**os.environ, "AUTOHUNT_SCOPE": "*.example.com", "AUTOHUNT_MAX_RPS": "8",
+               "AUTOHUNT_MAX_CONC": "10", **extra}
+        out = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(
+            {"tool_name": "Bash", "tool_input": {"command": cmd}}), text=True, capture_output=True, env=env).stdout
+        return bool(out.strip())  # non-empty stdout = a deny
+    deny = fw("curl https://evil.com", {})
+    allow = not fw("curl https://app.example.com -s", {})
+    ratecap = fw("nuclei -u https://app.example.com", {})
+    print(f"  firewall scope .... {'ok (out-of-scope denied)' if deny else 'FAIL'}")
+    print(f"  firewall in-scope . {'ok (in-scope allowed)' if allow else 'FAIL'}")
+    print(f"  firewall rate ..... {'ok (uncapped scan denied)' if ratecap else 'FAIL'}")
+    ok = ok and deny and allow and ratecap
+
+    if args.dry_run:
+        print("\n" + ("PASS (static checks)" if ok else "FAIL (see above)"))
+        return 0 if ok else 1
+    if not shutil.which("claude"):
+        print("\nFAIL — claude CLI required for the live hunt.")
+        return 1
+
+    print("\nRunning a benign live hunt against example.com (small spend)…")
+    args.max_budget_usd = min(args.max_budget_usd, 1.0)
+    args.max_turns = min(args.max_turns, 20)
+    args.model = args.verify_model = "sonnet"
+    args.no_verify = True
+    args.capture, args.rate_proxy, args.oob = "none", False, None
+    p = synthetic_program("https://example.com", "example.com")
+    allow, seeds, out = compute_scope(p)
+    ws = setup_workspace(p, allow, seeds, out, args)
+    mem = load_memory(ws)
+    hr = hunt_planner(p, ws, hunter_env(allow, out, args, {}), args, mem)
+    save_memory(ws, mem)
+    cost = sum(ph["cost"] for ph in hr["phases"])
+    recon_n = sum(len(mem["recon"].get(k, [])) for k in RECON_KEYS)
+    live_ok = hr["ok"] and cost > 0
+    print(f"  planner ran ....... {'ok' if hr['ok'] else 'FAIL'} (${cost:.2f}, recon items: {recon_n})")
+    ok = ok and live_ok
+    print("\n" + ("PASS — pipeline healthy." if ok else "FAIL (see above)"))
+    return 0 if ok else 1
+
+
+def main():
+    args = parse_args()
+    check_prereqs(args)
+    if args.selftest:
+        sys.exit(run_selftest(args))
+    if args.watch:
+        log(f"watch mode — repeating every {args.watch}s (touch {HUNTS / 'STOP'} to stop).")
+        while True:
+            run_once(args)
+            if (HUNTS / "STOP").exists():
+                log("STOP present — ending watch loop.")
+                break
+            time.sleep(args.watch)
+    else:
+        run_once(args)
 
 
 if __name__ == "__main__":
