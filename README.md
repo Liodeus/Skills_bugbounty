@@ -40,6 +40,57 @@ fires, …) and survives an independent refuter. Everything unproven is surfaced
 
 ---
 
+## Pipeline (start → end)
+
+```
+SETUP (once, human)   ./install_tools.sh · claude /login · .env (YWH_TOTP_SECRET|YWH_PAT, DISCORD_WEBHOOK_URL)
+      │
+      ▼
+./run.sh [--every N]  load .env → preflight → [start dashboard?]
+      │
+      ▼
+1. SCRAPE   yeswehack_programs.py  (non-interactive auth: PAT / generated TOTP / cached JWT)
+            └─► data/yeswehack/<slug>/{program.md,scope.md,raw.json} + state.json   (incremental)
+      │
+      ▼
+2. LOOP     autohunt.py:  load catalog → prioritize → build_queue (--bbp-only/--only-changed/--limit/…)
+   ┌─────────────────────────────  per program  ─────────────────────────────┐
+   │  compute_scope → setup_workspace                                          │
+   │     data/hunts/<slug>/: CLAUDE.md · TARGET.md (scope+rate caps+creds+     │
+   │     memory) · .claude/{skills,agents,settings(firewall hook)} · memory/   │
+   │                              │                                            │
+   │                              ▼                                            │
+   │  PLAN + HUNT   one `claude -p` PLANNER (planner schema)                   │
+   │     ├─ reads doctrine/TARGET/memory, inspects surface                     │
+   │     ├─ dispatches  recon  subagent (once) → host/endpoint/JS/param map    │
+   │     ├─ dispatches  hunter subagent ×N (1 lead each, model-routed          │
+   │     │    sonnet/opus) → PROVE vs oracle:                                  │
+   │     │      XSS→xss-confirm.js · SSRF/blind→$AUTOHUNT_OOB ·                 │
+   │     │      IDOR/RBAC→2nd account · SQLi→curl bool/time diff               │
+   │     │    → writes /report-yeswehack .md when proven                       │
+   │     └─ returns findings[] · leads_unverified[] · tested_ruled_out[]       │
+   │                              │                                            │
+   │                              ▼                                            │
+   │  VERIFY   independent REFUTER (`claude -p`) re-runs each proof → drops FPs │
+   │           report_path enforced · dedupe vs index + memory                 │
+   │                              │                                            │
+   │                              ▼                                            │
+   │  NOTIFY + PERSIST   Discord (finding + report, lead digest) ·             │
+   │                     memory/ · status.json · ledger.jsonl                  │
+   └──────────────────────────────────────────────────────────────────────────┘
+        rails (always on): scope+rate firewall · per-target & global $ caps ·
+        circuit-breaker (3 fails) · usage-limit pause/resume · data/hunts/STOP
+      │                                                          │
+      ▼                                                          ▼
+3. YOU  review data/hunts/<slug>/report_*.md                dashboard: live SSE +
+        → submit on YesWeHack  (NEVER auto-submitted)        triage (STOP/dismiss/re-hunt)
+```
+
+Everything from `./run.sh` down is **headless and unattended**; `--every N` repeats the loop
+(re-scrape + hunt new/changed) until you `touch data/hunts/STOP`.
+
+---
+
 ## Quickstart
 
 ```bash
