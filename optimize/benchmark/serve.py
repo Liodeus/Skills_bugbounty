@@ -153,6 +153,96 @@ def app_safe(method, path, qs, body, headers):
     return _html('<html><body>A safe app. <a href="/search?q=hi">search</a></body></html>')
 
 
+# ---- variant apps (2nd per class: different endpoint/shape → valid train/val split) ---------- #
+def app_xss_reflected2(method, path, qs, body, headers):
+    """Attribute-context reflected XSS: /view?name= reflected inside an attribute. Safe: /list."""
+    if path == "/view":
+        n = qs.get("name", [""])[0]
+        return _html(f'<html><body><input type=text value="{n}"></body></html>')  # breaks out of attr
+    if path == "/list":
+        return _html("<html><body>nothing user-controlled here</body></html>")
+    return _html('<html><body><a href="/view?name=x">view</a></body></html>')
+
+
+def app_sqli2(method, path, qs, body, headers):
+    """Error/boolean SQLi: /user?uid= concatenated. Safe: /users."""
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE users(uid INTEGER, name TEXT, token TEXT)")
+    db.executemany("INSERT INTO users VALUES (?,?,?)", [(1, "alice", "t1"), (2, "bob", "FLAG_SQLI2")])
+    if path == "/user":
+        u = qs.get("uid", ["1"])[0]
+        try:
+            return 200, "application/json", json.dumps(
+                db.execute(f"SELECT uid,name FROM users WHERE uid='{u}'").fetchall()).encode()
+        except Exception as e:
+            return 500, "text/plain", f"SQL error: {e}".encode()
+    if path == "/users":
+        return 200, "application/json", json.dumps(db.execute("SELECT uid,name FROM users").fetchall()).encode()
+    return _html('<html><body><a href="/user?uid=1">user</a></body></html>')
+
+
+def app_ssrf2(method, path, qs, body, headers):
+    """SSRF: /preview?target= fetched server-side. Safe: /thumb."""
+    if path == "/preview":
+        t = qs.get("target", [""])[0]
+        if not t:
+            return 400, "text/plain", b"target required"
+        try:
+            with urllib.request.urlopen(t, timeout=4) as r:
+                return 200, "text/plain", r.read()[:2000]
+        except Exception as e:
+            return 502, "text/plain", f"preview error: {e}".encode()
+    return _html('<html><body>link preview service</body></html>')
+
+
+def app_ssti2(method, path, qs, body, headers):
+    """SSTI: /render?tpl= renders {{expr}} via eval. Safe: /page."""
+    if path == "/render":
+        tpl = qs.get("tpl", ["hi"])[0]
+        out = tpl
+        if "{{" in tpl and "}}" in tpl:
+            expr = tpl[tpl.find("{{") + 2:tpl.find("}}")].strip()
+            try:
+                out = tpl.replace("{{" + expr + "}}", str(eval(expr, {"__builtins__": {}}, {})))
+            except Exception:
+                pass
+        return _html(f"<html><body>{out}</body></html>")
+    return _html('<html><body><a href="/render?tpl=hi">render</a></body></html>')
+
+
+def app_cmdi2(method, path, qs, body, headers):
+    """Command injection: /lookup?domain= into a shell. Safe: /health."""
+    if path == "/lookup":
+        d = qs.get("domain", [""])[0]
+        try:
+            out = subprocess.run("echo looking up " + d, shell=True, capture_output=True,
+                                 text=True, timeout=4).stdout
+            return 200, "text/plain", out.encode()
+        except Exception as e:
+            return 500, "text/plain", str(e).encode()
+    return _html('<html><body><a href="/lookup?domain=example.com">lookup</a></body></html>')
+
+
+def app_secret2(method, path, qs, body, headers):
+    """Secret-in-JS: /config.js leaks a live token; /api/v2/whoami validates it."""
+    key = "tok_bench_live_92xQ"
+    if path == "/config.js":
+        return 200, "application/javascript", f'window.CFG={{token:"{key}"}};'.encode()
+    if path == "/api/v2/whoami":
+        if headers.get("Authorization", "") == f"Bearer {key}":
+            return 200, "application/json", b'{"user":"root@bench.local"}'
+        return 401, "application/json", b'{"error":"unauthorized"}'
+    return _html('<html><body><script src="/config.js"></script></body></html>')
+
+
+def app_safe2(method, path, qs, body, headers):
+    """NEGATIVE control #2: parameterized + escaped. Expected findings: NONE."""
+    if path == "/q":
+        q = qs.get("q", [""])[0].replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+        return _html(f"<html><body>You searched: {q}</body></html>")
+    return _html('<html><body>safe v2</body></html>')
+
+
 # task_id -> (port, app_fn, vuln_class, endpoint_contains|None)
 APPS = {
     "xss_reflected": (8801, app_xss_reflected, "xss", "/search"),
@@ -163,6 +253,14 @@ APPS = {
     "cmdi":          (8806, app_cmdi,          "cmdi", "/resolve"),
     "secret":        (8807, app_secret,        "secret", "/static/app.js"),
     "safe":          (8808, app_safe,          None, None),   # negative control
+    # variants (2nd app per class) — enable per-class train/val split
+    "xss_reflected2": (8811, app_xss_reflected2, "xss", "/view"),
+    "sqli2":          (8812, app_sqli2,          "sqli", "/user"),
+    "ssrf2":          (8813, app_ssrf2,          "ssrf", "/preview"),
+    "ssti2":          (8814, app_ssti2,          "ssti", "/render"),
+    "cmdi2":          (8815, app_cmdi2,          "cmdi", "/lookup"),
+    "secret2":        (8816, app_secret2,        "secret", "/config.js"),
+    "safe2":          (8817, app_safe2,          None, None),
 }
 
 

@@ -50,7 +50,7 @@ def run_autohunt(base_url, prompt_override=None, model="sonnet", budget=1.0, tur
            "--max-budget-usd", str(budget), "--max-total-usd", str(budget * 1.5),
            "--throttle", "0"] + (extra or [])
     try:
-        subprocess.run(cmd, env=env, cwd=str(REPO), timeout=900,
+        subprocess.run(cmd, env=env, cwd=str(REPO), timeout=5400,  # generous: allow usage-limit pauses
                        stdin=subprocess.DEVNULL, capture_output=True, text=True)
     except subprocess.TimeoutExpired:
         pass
