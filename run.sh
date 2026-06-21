@@ -17,6 +17,7 @@
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")" && pwd)"
 cd "$REPO"
+[ -f "$REPO/.env" ] && { set -a; . "$REPO/.env"; set +a; }   # auto-load .env if present
 PY="${PYTHON:-python3}"
 
 PUBLIC_ONLY=0; NO_REFRESH=0; MONITOR=0; DASHBOARD=0; PASS=()

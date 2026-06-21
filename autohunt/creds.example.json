@@ -1,0 +1,9 @@
+{
+  "_comment": "TEMPLATE. Copy to data/creds/<program-slug>.json to enable AUTHENTICATED IDOR/RBAC testing for that program. autohunt tells the hunter this file exists; it reads it, authenticates as the accounts below, and proves cross-user / cross-role access. You need >=2 accounts to demonstrate a boundary crossing. data/ is gitignored — never commit real credentials.",
+  "login_url": "https://app.example.com/login",
+  "notes": "How to authenticate: e.g. POST {email,password} to /api/login, then send the returned token as 'Authorization: Bearer <token>'. Note any MFA/SSO/captcha quirks, and which account is lower-privileged.",
+  "accounts": [
+    { "label": "user1", "email": "user1@example.com", "username": "user1", "password": "REPLACE_ME", "role": "member" },
+    { "label": "user2", "email": "user2@example.com", "username": "user2", "password": "REPLACE_ME", "role": "member" }
+  ]
+}

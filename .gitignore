@@ -19,3 +19,6 @@ package-lock.json
 
 # Python venv for the web dashboard
 autohunt/web/.venv/
+
+# Local secrets (.env.example is the tracked template)
+.env

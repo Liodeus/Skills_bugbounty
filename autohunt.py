@@ -374,8 +374,9 @@ def setup_workspace(p, allow, seeds, out_hosts, args):
     if args.oob:
         parts.append(f"**OOB canary host (use for SSRF/blind oracles):** `{args.oob}`\n")
     if creds_path.exists():
-        parts.append(f"**Credentials available** at `{creds_path}` — use them for authed IDOR/RBAC "
-                     f"testing (need ≥2 accounts to prove cross-user access).\n")
+        parts.append(f"**Credentials available** at `{creds_path}` — JSON with `login_url`, `notes`, "
+                     f"and `accounts[]` (each: label/email/username/password/role). Read it, authenticate "
+                     f"as ≥2 accounts, and prove cross-user / cross-role access (IDOR/RBAC).\n")
     else:
         parts.append("**No credentials** — unauthenticated surface only. Skip IDOR/RBAC unless a "
                      "self-signup is in scope.\n")

@@ -140,8 +140,12 @@ Per program, one **planner** `claude -p` session:
 | `DISCORD_WEBHOOK_URL` | Finding / lead / monitor notifications (skipped if unset). |
 | `PYTHON` | Override the python interpreter `run.sh` uses (default `python3`). |
 
-Optional per-program credentials for authed IDOR/RBAC testing: `data/creds/<slug>.json` (the hunter
-uses them if present; default is unauthenticated surface).
+Copy **`.env.example` → `.env`** and fill it in; `run.sh` auto-loads `.env` (or `set -a && source .env`).
+`.env` is gitignored.
+
+Optional per-program credentials for authed IDOR/RBAC testing: `data/creds/<slug>.json` — copy the
+template **`autohunt/creds.example.json`** (`login_url`, `notes`, `accounts[]` with ≥2 accounts). The
+hunter uses it if present; default is unauthenticated surface. `data/` is gitignored.
 
 ## Outputs (`data/`, gitignored)
 
