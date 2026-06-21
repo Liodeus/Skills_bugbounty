@@ -336,9 +336,10 @@ def load_state(path):
 
 
 def save_state(path, programs, generated_at):
-    path.write_text(
-        json.dumps({"generated_at": generated_at, "programs": programs}, indent=2, ensure_ascii=False)
-    )
+    # atomic write so a crash can't truncate the catalog (autohunt hard-fails on corrupt state.json)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps({"generated_at": generated_at, "programs": programs}, indent=2, ensure_ascii=False))
+    os.replace(tmp, path)
 
 
 # --------------------------------------------------------------------------- #

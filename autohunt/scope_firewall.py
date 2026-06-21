@@ -68,8 +68,12 @@ def host_matches(host, pattern):
 def extract_hosts(command):
     """Best-effort: pull candidate target hosts/IPs out of a shell command."""
     hosts = set()
-    # 1) Full URLs (exclude shell metachars so `curl https://x; echo` doesn't grab "x;")
-    for m in re.finditer(r"https?://([^\s/'\"|>);&`]+)", command):
+    # 1) Full URLs — ANY scheme, case-insensitive (HTTP://, ftp://, gopher://, …); exclude shell
+    #    metachars so `curl https://x; echo` doesn't grab "x;".
+    for m in re.finditer(r"[a-zA-Z][a-zA-Z0-9+.-]*://([^\s/'\"|>);&`]+)", command, re.I):
+        hosts.add(m.group(1))
+    # 1b) Protocol-relative `//host` (the `//` in a real scheme is preceded by ':' and excluded).
+    for m in re.finditer(r"(?:^|[\s'\"(=,;|&])//([^\s/'\"|>);&`]+)", command):
         hosts.add(m.group(1))
     # 2) Common target flags: -u/-d/--url/--host/--target/--domain <value>
     for m in re.finditer(
@@ -132,6 +136,33 @@ def flag_value(toks, aliases):
     return False, None
 
 
+# Command launchers that wrap the real tool (so the real tool isn't toks[0]).
+LAUNCHERS = {"env", "time", "timeout", "nohup", "stdbuf", "nice", "ionice",
+             "sudo", "doas", "setsid", "exec", "command", "xargs"}
+
+
+def effective_tool(toks):
+    """Resolve the real command, skipping leading VAR=val assignments and launcher wrappers
+    (e.g. `timeout 300 sudo nuclei …` → nuclei)."""
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        if re.match(r"^[A-Za-z_]\w*=", t):  # VAR=val
+            i += 1
+            continue
+        base = t.split("/")[-1]
+        if base in LAUNCHERS:
+            i += 1
+            while i < len(toks) and (toks[i].startswith("-") or re.match(r"^[A-Za-z_]\w*=", toks[i])):
+                i += 1
+            # launchers that take a positional arg (duration / priority)
+            if base in ("timeout", "nice", "ionice") and i < len(toks) and re.match(r"^[0-9]", toks[i]):
+                i += 1
+            continue
+        break
+    return toks[i].split("/")[-1] if i < len(toks) else ""
+
+
 def rate_violation(segment, max_rps, max_conc):
     try:
         toks = shlex.split(segment)
@@ -139,7 +170,7 @@ def rate_violation(segment, max_rps, max_conc):
         toks = segment.split()
     if not toks:
         return None
-    tool = toks[0].split("/")[-1]
+    tool = effective_tool(toks)
     spec = RATE_TOOLS.get(tool)
     if not spec:
         return None
@@ -147,7 +178,9 @@ def rate_violation(segment, max_rps, max_conc):
         present, val = flag_value(toks, spec["rate"])
         if not present:
             return f"`{tool}` needs a rate cap — add `{spec['rate'][0]} {int(max_rps)}` (WAF/IPS guard)."
-        if val is not None and val > max_rps:
+        if val is None:
+            return f"`{tool}` {spec['rate'][0]} must be a number ≤ {int(max_rps)}."
+        if val > max_rps:
             return f"`{tool}` {spec['rate'][0]}={int(val)} exceeds the rate cap — use `{spec['rate'][0]} {int(max_rps)}` or lower."
     if spec["conc"]:
         present, val = flag_value(toks, spec["conc"])

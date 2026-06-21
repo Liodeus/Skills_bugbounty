@@ -107,7 +107,7 @@ Per program, one **planner** `claude -p` session:
 | `--program <slug>` / `--limit N` / `--only-changed` / `--bbp-only` | Pick & scope the queue. |
 | `--max-budget-usd` / `--max-total-usd` / `--max-turns` / `--timeout` | Budget & time caps. |
 | `--max-rps` (8) / `--max-conc` (10) | **Enforced** scan-tool rate/concurrency caps (anti-IPS). |
-| `--model` / `--verify-model` | Planner/hunter model vs the refuter model. |
+| `--model` / `--verify-model` | Planner/hunter vs refuter model — **default `sonnet`** (cheaper); pass `opus` for hard targets. |
 | `--capture mitmdump` | Record traffic through a proxy for later human replay. |
 | `--oob <host>` | OOB canary host for SSRF/blind oracles (also added to the safe-host allowlist). |
 

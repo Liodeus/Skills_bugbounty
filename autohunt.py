@@ -115,10 +115,10 @@ def extract_host(scope_value):
 
 
 def seed_url(scope_value, host):
-    v = (scope_value or "").strip()
-    if v.lower().startswith(("http://", "https://")):
-        return v.split()[0]
-    base = host[2:] if host.startswith("*.") else host
+    base = host[2:] if host.startswith("*.") else host  # de-wildcard
+    v = (scope_value or "").strip().split()[0] if scope_value else ""
+    if v.lower().startswith(("http://", "https://")) and "*" not in v:
+        return v
     return "https://" + base
 
 
@@ -148,7 +148,10 @@ def load_catalog():
     state_path = CATALOG / "state.json"
     if not state_path.exists():
         sys.exit(f"No catalog at {state_path}. Run: python yeswehack_programs.py first.")
-    state = json.loads(state_path.read_text())
+    try:
+        state = json.loads(state_path.read_text())
+    except Exception as e:
+        sys.exit(f"Catalog state.json is corrupt ({e}). Re-run: python yeswehack_programs.py")
     programs = []
     for slug, entry in state.get("programs", {}).items():
         raw = {}
@@ -198,8 +201,12 @@ def load_json(path, default):
 
 
 def save_json(path, obj):
+    # atomic: write to a temp file then rename, so a crash mid-write can't truncate
+    # status/findings/memory state (which load_json would then silently reset to {}).
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False))
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False))
+    os.replace(tmp, path)
 
 
 def append_jsonl(path, record):
@@ -353,7 +360,10 @@ def setup_workspace(p, allow, seeds, out_hosts, args):
     creds_path = REPO / "data" / "creds" / f"{p['slug']}.json"
     parts = []
     if program_md.exists():
-        parts.append(program_md.read_text())
+        pm = program_md.read_text()
+        if len(pm) > 4000:  # cap the verbose rules blob re-ingested by every session/subagent
+            pm = pm[:4000] + "\n\n…(description truncated — full text in data/yeswehack/" + p["slug"] + "/program.md)…\n"
+        parts.append(pm)
     if scope_md.exists():
         parts.append(scope_md.read_text())
     parts.append("## Autohunt scope (ENFORCED by firewall — stay inside)\n")
@@ -458,6 +468,25 @@ def stop_capture(proc):
 # --------------------------------------------------------------------------- #
 # claude invocations
 # --------------------------------------------------------------------------- #
+def _scan_json(text):
+    """Return the first balanced JSON object embedded in text, or None (tolerates prose)."""
+    if not isinstance(text, str):
+        return None
+    dec = json.JSONDecoder()
+    i = 0
+    while True:
+        j = text.find("{", i)
+        if j < 0:
+            return None
+        try:
+            obj, _ = dec.raw_decode(text, j)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+        i = j + 1
+
+
 def run_claude(prompt, schema, ws, env, args, max_turns, max_budget, model=None):
     cmd = ["claude", "-p", prompt,
            "--add-dir", str(SKILLS),
@@ -480,21 +509,21 @@ def run_claude(prompt, schema, ws, env, args, max_turns, max_budget, model=None)
         proc = subprocess.run(cmd, cwd=str(ws), env=env, capture_output=True, text=True,
                               timeout=args.timeout, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
-        return {"_timeout": True}
+        # the session ran up to the cap → charge the per-session budget so the global
+        # guard can't be silently overshot by a night of timeouts.
+        return {"_timeout": True, "subtype": "timeout", "total_cost_usd": max_budget}
     except FileNotFoundError:
         sys.exit("`claude` CLI not found on PATH. Install Claude Code or run with --dry-run.")
     if not proc.stdout.strip():
-        return {"_empty": True, "_stderr": proc.stderr[-2000:]}
+        return {"_empty": True, "subtype": "empty", "_stderr": proc.stderr[-2000:]}
     try:
         return json.loads(proc.stdout)
     except json.JSONDecodeError:
-        m2 = re.findall(r"\{.*\}", proc.stdout, re.DOTALL)
-        if m2:
-            try:
-                return json.loads(m2[-1])
-            except Exception:
-                pass
-        return {"_unparsed": proc.stdout[-2000:], "_stderr": proc.stderr[-2000:]}
+        obj = _scan_json(proc.stdout)
+        if obj is not None:
+            return obj
+        return {"_unparsed": proc.stdout[-2000:], "subtype": "unparsed",
+                "total_cost_usd": max_budget, "_stderr": proc.stderr[-2000:]}
 
 
 def extract_structured(result):
@@ -505,12 +534,10 @@ def extract_structured(result):
         return so
     txt = result.get("result")
     if isinstance(txt, str):
-        m = re.search(r"\{.*\}", txt, re.DOTALL)
-        if m:
-            try:
-                return json.loads(m.group(0))
-            except Exception:
-                return None
+        try:
+            return json.loads(txt)
+        except Exception:
+            return _scan_json(txt)
     return None
 
 
@@ -812,8 +839,8 @@ def parse_args():
                          "single = one monolithic agent.")
     ap.add_argument("--no-verify", action="store_true", help="Skip the independent refuter.")
     ap.add_argument("--capture", choices=["none", "mitmdump", "caido"], default="none")
-    ap.add_argument("--model", default="opus", help="Planner/hunter model (e.g. opus, sonnet).")
-    ap.add_argument("--verify-model", default="opus", help="Refuter/triage model (a strong skeptic).")
+    ap.add_argument("--model", default="sonnet", help="Planner/hunter model (default sonnet; use opus for hard targets).")
+    ap.add_argument("--verify-model", default="sonnet", help="Refuter/triage model (default sonnet; opus for a stronger skeptic).")
     ap.add_argument("--permission-mode", default="bypassPermissions")
     ap.add_argument("--use-api", action="store_true",
                     help="Bill the Anthropic API (keep ANTHROPIC_API_KEY). Default: use your Claude subscription.")
@@ -882,14 +909,16 @@ def main():
 
     rc = new_run_cost()
     total_cost = 0.0
+    consec_fail = 0
     for i, p in enumerate(queue, 1):
         if (HUNTS / "STOP").exists():
             log("STOP sentinel — halting.")
             discord_send(content="🛑 autohunt halted (STOP).")
             break
-        if total_cost >= args.max_total_usd:
-            log(f"Global budget ${args.max_total_usd} reached — halting.")
-            discord_send(content=f"💰 autohunt halted — global budget reached.")
+        if total_cost + args.max_budget_usd > args.max_total_usd:  # look-ahead: don't overshoot
+            log(f"Global budget ${args.max_total_usd} would be exceeded by the next target — halting "
+                f"(~${total_cost:.2f} spent).")
+            discord_send(content=f"💰 autohunt halted — global budget ${args.max_total_usd} reached (~${total_cost:.2f}).")
             break
 
         allow, seeds, out_hosts = compute_scope(p)
@@ -920,6 +949,9 @@ def main():
             record["status"] = "done"
             reported = []
             for f in hr["verified"]:
+                if (HUNTS / "STOP").exists():
+                    log("  STOP — aborting remaining verification.")
+                    break
                 if not args.no_verify:
                     verdict, vph = run_verifier(f, ws, env, args)
                     add_phase_cost(rc, p["slug"], vph)
@@ -962,6 +994,15 @@ def main():
                               "verified_reported", "total_cost_usd")}
         status[p["slug"]]["last_run"] = record["finished_at"]
         save_json(HUNTS / "status.json", status)
+
+        # circuit breaker: a run of consecutive failures usually means a systemic problem
+        # (auth/usage-limit/network) — stop before draining the whole queue into "failed".
+        consec_fail = consec_fail + 1 if record["status"] == "failed" else 0
+        if consec_fail >= 3:
+            log(f"{consec_fail} consecutive failures — circuit breaker tripped, halting.")
+            discord_send(content=f"⚠️ autohunt halted — {consec_fail} consecutive failures "
+                         "(likely auth/usage-limit/network); remaining programs untouched.")
+            break
         time.sleep(args.throttle)
 
     write_cost_report(rc)

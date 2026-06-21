@@ -51,7 +51,7 @@ import re as _re
 _STRIP_TAGS = _re.compile(r"<\s*(script|style|iframe|object|embed|form|link|meta)\b[^>]*>.*?<\s*/\s*\1\s*>",
                           _re.I | _re.S)
 _STRIP_SELFCLOSE = _re.compile(r"<\s*(script|style|iframe|object|embed|link|meta)\b[^>]*/?>", _re.I)
-_ON_ATTR = _re.compile(r"\son\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", _re.I)
+_ON_ATTR = _re.compile(r"[\s/]on\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s/>]+)", _re.I)
 _JS_URL = _re.compile(r"((?:href|src))\s*=\s*(\"|')\s*(?:javascript|data|vbscript):[^\"']*\2", _re.I)
 
 
@@ -68,6 +68,24 @@ def vuln_class_from_key(key: str) -> str:
     return (key or "").split(":", 1)[0] or "other"
 
 
+def _bad_slug(slug: str) -> bool:
+    """Reject slugs that could escape the workspace dir (path traversal)."""
+    return (not slug) or "/" in slug or "\\" in slug or slug in (".", "..") or ".." in slug.split("/")
+
+
+def _dir_sig(path: Path) -> float:
+    """A cheap change-signature for a dir tree: max mtime over it (for cache invalidation)."""
+    try:
+        m = path.stat().st_mtime
+        for p in path.rglob("*"):
+            mt = p.stat().st_mtime
+            if mt > m:
+                m = mt
+        return m
+    except OSError:
+        return 0.0
+
+
 SEVERITIES = ["critical", "high", "medium", "low", "info"]
 
 
@@ -76,6 +94,15 @@ class DataStore:
         self.root = Path(data_dir).resolve()
         self.catalog = self.root / "yeswehack"
         self.hunts = self.root / "hunts"
+        self._cache = {}  # name -> (signature, value)
+
+    def _cached(self, name, sig, compute):
+        hit = self._cache.get(name)
+        if hit and hit[0] == sig:
+            return hit[1]
+        val = compute()
+        self._cache[name] = (sig, val)
+        return val
 
     # ---- low-level ---- #
     def watch_paths(self):
@@ -101,16 +128,20 @@ class DataStore:
         return _load_json(self.hunts / slug / "memory" / "knowledge.json", {})
 
     def _all_knowledge(self):
-        out = {}
-        if self.hunts.exists():
-            for d in self.hunts.iterdir():
-                kp = d / "memory" / "knowledge.json"
-                if kp.exists():
-                    out[d.name] = _load_json(kp, {})
-        return out
+        def compute():
+            out = {}
+            if self.hunts.exists():
+                for d in self.hunts.iterdir():
+                    kp = d / "memory" / "knowledge.json"
+                    if kp.exists():
+                        out[d.name] = _load_json(kp, {})
+            return out
+        return self._cached("knowledge", _dir_sig(self.hunts), compute)
 
     def _ledger(self):
-        return list(_iter_jsonl(self.hunts / "ledger.jsonl"))
+        lp = self.hunts / "ledger.jsonl"
+        sig = (lp.stat().st_mtime, lp.stat().st_size) if lp.exists() else 0
+        return self._cached("ledger", sig, lambda: list(_iter_jsonl(lp)))
 
     def _alerts(self):
         return list(_iter_jsonl(self.hunts / "alerts.jsonl"))
@@ -175,6 +206,8 @@ class DataStore:
         return rows
 
     def program(self, slug: str):
+        if _bad_slug(slug):
+            return None
         if slug not in self._catalog_state().get("programs", {}) and not (self.hunts / slug).exists():
             return None
         raw = self._raw(slug)
@@ -275,10 +308,13 @@ class DataStore:
 
     def report_html(self, slug: str, filename: str):
         # path-sanitise: must be a report_*.md inside this slug's workspace
+        if _bad_slug(slug):
+            return None
         if not filename.startswith("report_") or not filename.endswith(".md") or "/" in filename or "\\" in filename:
             return None
         base = (self.hunts / slug).resolve()
         target = (base / filename).resolve()
-        if base not in target.parents or not target.exists():
+        # base must sit directly under hunts/, and target directly under base
+        if base.parent != self.hunts.resolve() or target.parent != base or not target.exists():
             return None
         return _md(_read_text(target))
