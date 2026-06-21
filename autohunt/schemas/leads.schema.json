@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["leads"],
+  "properties": {
+    "leads": {
+      "type": "array",
+      "description": "Prioritized, specific, testable vulnerability hypotheses for THIS app. No generic checklist items.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "vuln_class", "asset", "endpoint", "why", "priority"],
+        "properties": {
+          "title": { "type": "string" },
+          "vuln_class": { "type": "string", "enum": ["ssrf", "sqli", "rce", "cmdi", "ssti", "xxe", "idor", "rbac", "xss", "bxss", "ato", "secret", "business-logic", "other"] },
+          "asset": { "type": "string", "description": "In-scope host." },
+          "endpoint": { "type": "string", "description": "e.g. 'POST /api/v1/orders/{id}'." },
+          "why": { "type": "string", "description": "The specific signal that makes this worth testing (not generic)." },
+          "priority": { "type": "string", "enum": ["high", "medium", "low"] }
+        }
+      }
+    }
+  }
+}

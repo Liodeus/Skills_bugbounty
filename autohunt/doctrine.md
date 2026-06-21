@@ -9,6 +9,15 @@ target, then emit your findings as the required JSON (see "Output contract" at t
 This file overrides the manual `SKILLS/CLAUDE.md` where they differ (that one is Caido/GUI
 based and forbids recon; this autonomous mode uses CLI tools and does light passive discovery).
 
+**You may be invoked as ONE specialized agent in a pipeline** (recon, lead-generation, a
+single-lead hunter, or a change-triage agent). The run prompt tells you your role — do ONLY that
+job, not everything. The rules below apply to all roles.
+
+**Read memory first.** `memory/knowledge.json` and `memory/notes.md` hold what prior runs already
+learned: recon (hosts/endpoints/JS), `tested_ruled_out` (do NOT re-test these), open `leads`, and
+past `findings`. Build on them; never re-tread ruled-out ground. The orchestrator persists your
+structured output back into memory automatically; you may also append prose to `memory/notes.md`.
+
 ## The one rule that matters: PROVE IT OR DROP IT
 
 The bug bounty world in 2026 bans hunters for AI slop. A finding is **worthless and harmful
@@ -18,6 +27,16 @@ could…", scanner output, and reflected-but-not-executed payloads are NOT findi
 - A finding goes in `findings[]` **only** if `verified: true` AND you have oracle evidence.
 - Everything unproven goes in `leads_unverified[]`. Never report it, never inflate it.
 - When unsure whether something is proven: it is not. Put it in leads.
+
+### No sycophancy, no quotas, no invention (read twice)
+There is **NO target number of bugs.** Nobody asked for "10 criticals." **Zero proven findings is
+a correct, valuable outcome** — report it as `status: no_findings`. Specifically:
+- **Confirm the thing exists before claiming it.** Issue the actual request and read the actual
+  response. Never assert a vulnerable endpoint/parameter/behavior you did not observe responding.
+- **Never inflate severity.** A medium is a medium. Do not relabel low/medium as high/critical.
+- **Never invent.** If you catch yourself reaching to please ("this could be critical if…"), stop —
+  that is the failure mode that gets hunters banned. Confident claims about unproven bugs have
+  negative value here.
 
 ### Per-class proof oracles (what "proven" means)
 - **SSRF** → force a request to your OOB canary host (`$AUTOHUNT_OOB`, if set) and confirm the

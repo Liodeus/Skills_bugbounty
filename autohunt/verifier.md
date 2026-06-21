@@ -20,15 +20,17 @@ hosts — stay in scope). The skills in `.claude/skills/` are available.
 
 ## What to do
 
-1. Re-run the PoC from the evidence yourself (curl/httpx, or `node autohunt/xss-confirm.js` for XSS).
-2. Apply the correct oracle for the class:
+1. **First confirm it even exists.** Issue the request yourself and read the real response — does
+   the endpoint/parameter/behavior actually exist and respond as claimed? If not, it's refuted.
+2. Re-run the PoC from the evidence yourself (curl/httpx, or `node autohunt/xss-confirm.js` for XSS).
+3. Apply the correct oracle for the class:
    - SSRF → does the OOB hit actually fire / metadata actually return?
    - SQLi → is the boolean/time differential real and stable (not network jitter)?
    - RCE/cmdi → does the unique marker actually come back?
    - IDOR/RBAC → does the **second account** truly read/act on the first's resource (not just a 200)?
    - XSS → does `alert(nonce)` actually execute (browser), not merely reflect?
    - secret → is the key actually live?
-3. Reproduce **2–3 times** if cheap. Network flukes and self-responses are the usual false positives.
+4. Reproduce **2–3 times** if cheap. Network flukes and self-responses are the usual false positives.
 
 ## Refute if ANY of these hold
 - The PoC does not reproduce, or only sometimes.

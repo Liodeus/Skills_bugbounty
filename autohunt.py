@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
-"""autohunt — autonomous YesWeHack hunting loop.
+"""autohunt — autonomous YesWeHack hunting loop (v2).
 
-Walks the local program catalog (produced by yeswehack_programs.py) and, per program,
-spawns ONE budget-capped, scope-firewalled headless `claude -p` session that discovers,
-tests, and PROVES vulnerabilities, writes a report, and emits structured findings. An
-optional independent verifier refutes each candidate; survivors are reported + pushed to
-Discord. Status is tracked in a resumable ledger.
+Walks the local program catalog (produced by yeswehack_programs.py) and, per program, runs a
+pipeline of SPECIALIZED headless `claude -p` agents (recon → leads → per-lead hunters), gates
+every finding behind executed proof-of-exploitation plus an independent refuter, writes reports,
+pushes findings + unverified leads to Discord, and records resumable status. Each program keeps a
+persistent memory (a "mapper"/brain-dump) so runs compound instead of starting blind.
 
-The hunting intelligence is reused, not reimplemented: each session loads the autonomous
-doctrine (autohunt/doctrine.md) as CLAUDE.md plus the repo's hunt skills.
+A `--monitor` mode re-probes known surface for changes and asks a triage agent whether a change
+warrants a human look (alert only — no auto-hunt).
 
-Safety: per-target --max-turns/--max-budget-usd/timeout, a global --max-total-usd, a
-data/hunts/STOP kill-switch, and a PreToolUse scope-firewall hook that blocks out-of-scope
-hosts even under --dangerously-skip-permissions. No reports are auto-submitted to YWH.
+Design follows Fahad Faisal's "AI Agents in Bug Bounty": specialized agents (not one big prompt),
+persistent memory, change-detection, and hard anti-slop discipline (prove it or drop it).
 
-Usage examples:
-  python autohunt.py --dry-run                 # show the prioritized queue, run nothing
-  python autohunt.py --program acme --max-budget-usd 1
-  python autohunt.py --only-changed            # scan new / scope-changed programs
-  python autohunt.py --limit 5 --model sonnet
+Safety: per-target + per-phase budget caps, --max-total-usd global cap, a data/hunts/STOP
+kill-switch, and a PreToolUse scope-firewall hook that blocks out-of-scope hosts even under
+--dangerously-skip-permissions. No reports are auto-submitted to YWH.
+
+Examples:
+  python autohunt.py --dry-run
+  python autohunt.py --program acme --mode pipeline --max-leads 3 --max-budget-usd 4
+  python autohunt.py --only-changed --model sonnet --verify-model opus
+  python autohunt.py --monitor                      # change-detection pass (schedule via cron/loop)
 """
 
 import argparse
@@ -27,10 +30,15 @@ import json
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -41,13 +49,16 @@ HUNTS = REPO / "data" / "hunts"
 SKILLS = REPO / "SKILLS"
 
 DOCTRINE = AUTOHUNT / "doctrine.md"
-SCHEMA = AUTOHUNT / "findings.schema.json"
 HOOK = AUTOHUNT / "scope_firewall.py"
 VERIFIER_PROMPT = AUTOHUNT / "verifier.md"
+AGENTS = AUTOHUNT / "agents"
+SCHEMAS = AUTOHUNT / "schemas"
+FINDINGS_SCHEMA = AUTOHUNT / "findings.schema.json"
 
 WEB_TYPES = {"web-application", "api", ""}  # "" = bare-string scope with no type → treat as web
 HOST_RE = re.compile(r"^\*?\.?(?:[a-z0-9_-]+\.)+[a-z]{2,}$")
 IP_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
+RECON_KEYS = ("live_hosts", "endpoints", "js_files", "params", "tech")
 
 VERIFIER_SCHEMA = json.dumps({
     "type": "object", "additionalProperties": False,
@@ -90,7 +101,6 @@ def norm_asset(s):
 
 
 def extract_host(scope_value):
-    """Return a clean host/wildcard from a scope string, or None if it isn't one."""
     v = (scope_value or "").strip()
     v = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", v)
     v = v.split("/")[0].split("@")[-1].strip()
@@ -111,7 +121,6 @@ def seed_url(scope_value, host):
 
 
 def compute_scope(program):
-    """(allow_hosts, seed_urls, out_hosts) for a program — web/api assets only."""
     allow, seeds, out = [], [], []
     for a in program["in_assets"]:
         if a["scope_type"] not in WEB_TYPES:
@@ -170,8 +179,8 @@ def prioritize(programs, args):
             continue
         allow, _, _ = compute_scope(p)
         if not allow:
-            continue  # no web/api hosts to test
-        if args.bbp_only and not p["bounty"]:
+            continue
+        if getattr(args, "bbp_only", False) and not p["bounty"]:
             continue
         p["_scope_hash"] = scope_hash(p)
         elig.append(p)
@@ -179,9 +188,6 @@ def prioritize(programs, args):
     return elig
 
 
-# --------------------------------------------------------------------------- #
-# ledger / state
-# --------------------------------------------------------------------------- #
 def load_json(path, default):
     try:
         return json.loads(path.read_text())
@@ -194,10 +200,120 @@ def save_json(path, obj):
     path.write_text(json.dumps(obj, indent=2, ensure_ascii=False))
 
 
-def append_ledger(record):
-    HUNTS.mkdir(parents=True, exist_ok=True)
-    with (HUNTS / "ledger.jsonl").open("a") as f:
+def append_jsonl(path, record):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def append_ledger(record):
+    append_jsonl(HUNTS / "ledger.jsonl", record)
+
+
+# --------------------------------------------------------------------------- #
+# per-target memory ("mapper" / brain-dump)
+# --------------------------------------------------------------------------- #
+def mem_path(ws):
+    return ws / "memory" / "knowledge.json"
+
+
+def load_memory(ws):
+    mem = load_json(mem_path(ws), None)
+    if not isinstance(mem, dict):
+        mem = {"slug": ws.name, "updated_at": None, "recon": {}, "tested_ruled_out": [],
+               "leads": [], "findings": [], "monitor_baseline": {}}
+    mem.setdefault("recon", {})
+    for k in RECON_KEYS:
+        mem["recon"].setdefault(k, [])
+    for k in ("tested_ruled_out", "leads", "findings"):
+        mem.setdefault(k, [])
+    mem.setdefault("monitor_baseline", {})
+    return mem
+
+
+def save_memory(ws, mem):
+    mem["updated_at"] = now_iso()
+    save_json(mem_path(ws), mem)
+
+
+def merge_recon(mem, recon):
+    for k in RECON_KEYS:
+        vals = recon.get(k) or []
+        if isinstance(vals, list):
+            mem["recon"][k] = sorted(set(mem["recon"][k]) | {str(v) for v in vals})[:500]
+
+
+def lead_key(l):
+    k = "|".join(str(l.get(x, "")).lower().strip() for x in ("vuln_class", "asset", "endpoint"))
+    return k if k.strip("|") else str(l.get("title", "")).lower().strip()
+
+
+def merge_leads(mem, leads):
+    """Add unseen leads (status open). Return the newly-added ones (for alerting)."""
+    existing = {lead_key(l): l for l in mem["leads"]}
+    new = []
+    for l in leads or []:
+        k = lead_key(l)
+        if not k:
+            continue
+        if k in existing:
+            existing[k]["last_seen"] = now_iso()
+            continue
+        item = {"id": uuid.uuid4().hex[:8], "title": l.get("title", ""),
+                "vuln_class": l.get("vuln_class", ""), "asset": l.get("asset", ""),
+                "endpoint": l.get("endpoint", ""), "why": l.get("why") or l.get("why_unproven", ""),
+                "priority": l.get("priority", "medium"), "status": "open",
+                "first_seen": now_iso(), "last_seen": now_iso(), "alerted": False}
+        mem["leads"].append(item)
+        existing[k] = item
+        new.append(item)
+    return new
+
+
+def set_lead_status(mem, lead, status):
+    k = lead_key(lead)
+    for e in mem["leads"]:
+        if lead_key(e) == k:
+            e["status"] = status
+            e["last_seen"] = now_iso()
+
+
+def record_tested(mem, items):
+    seen = {t.get("what") for t in mem["tested_ruled_out"]}
+    for it in items or []:
+        what = it.get("what")
+        if what and what not in seen:
+            mem["tested_ruled_out"].append({"what": what, "why": it.get("why", ""), "run": now_iso()})
+            seen.add(what)
+
+
+def record_finding_mem(mem, f):
+    keys = {x.get("dedupe_key") for x in mem["findings"]}
+    if f.get("dedupe_key") not in keys:
+        mem["findings"].append({"dedupe_key": f.get("dedupe_key"), "title": f.get("title"),
+                                "severity": f.get("severity"), "report_path": f.get("report_path"),
+                                "first_seen": now_iso()})
+
+
+def memory_digest(mem):
+    r = mem["recon"]
+    open_leads = [l for l in mem["leads"] if l.get("status") == "open"]
+    lines = ["## Memory — prior runs (read before testing; do NOT re-test ruled-out)", ""]
+    lines.append(f"- Recon known: {len(r['live_hosts'])} live hosts, {len(r['endpoints'])} endpoints, "
+                 f"{len(r['js_files'])} JS files, {len(r['params'])} params.")
+    if open_leads:
+        lines.append(f"- Open leads ({len(open_leads)}):")
+        for l in open_leads[:15]:
+            lines.append(f"  - {l.get('title','')} ({l.get('vuln_class','?')}) on {l.get('asset','')} {l.get('endpoint','')}")
+    if mem["tested_ruled_out"]:
+        lines.append(f"- Already ruled out ({len(mem['tested_ruled_out'])}) — DO NOT re-test:")
+        for t in mem["tested_ruled_out"][-15:]:
+            lines.append(f"  - {t.get('what','')} — {t.get('why','')}")
+    if mem["findings"]:
+        lines.append(f"- Prior findings ({len(mem['findings'])}):")
+        for x in mem["findings"][:15]:
+            lines.append(f"  - {x.get('title','')} [{x.get('severity','?')}]")
+    return "\n".join(lines) + "\n"
 
 
 # --------------------------------------------------------------------------- #
@@ -205,7 +321,7 @@ def append_ledger(record):
 # --------------------------------------------------------------------------- #
 def setup_workspace(p, allow, seeds, out_hosts, args):
     ws = HUNTS / p["slug"]
-    ws.mkdir(parents=True, exist_ok=True)
+    (ws / "memory").mkdir(parents=True, exist_ok=True)  # preserved across runs
     shutil.copy(DOCTRINE, ws / "CLAUDE.md")
 
     skills_dir = ws / ".claude" / "skills"
@@ -224,9 +340,8 @@ def setup_workspace(p, allow, seeds, out_hosts, args):
                 "hooks": [{"type": "command", "command": f"python3 {HOOK}"}]}]}}
     save_json(ws / ".claude" / "settings.json", settings)
 
-    # TARGET.md = catalog program.md + scope.md + the enforced autohunt scope block
-    program_md = (CATALOG / p["slug"] / "program.md")
-    scope_md = (CATALOG / p["slug"] / "scope.md")
+    program_md = CATALOG / p["slug"] / "program.md"
+    scope_md = CATALOG / p["slug"] / "scope.md"
     creds_path = REPO / "data" / "creds" / f"{p['slug']}.json"
     parts = []
     if program_md.exists():
@@ -244,19 +359,19 @@ def setup_workspace(p, allow, seeds, out_hosts, args):
         parts.append(f"**Credentials available** at `{creds_path}` — use them for authed IDOR/RBAC "
                      f"testing (need ≥2 accounts to prove cross-user access).\n")
     else:
-        parts.append("**No credentials** — unauthenticated surface only. Skip IDOR/RBAC unless you "
-                     "find a self-signup that's in scope.\n")
+        parts.append("**No credentials** — unauthenticated surface only. Skip IDOR/RBAC unless a "
+                     "self-signup is in scope.\n")
+    parts.append(memory_digest(load_memory(ws)))
     (ws / "TARGET.md").write_text("\n".join(parts))
 
     prompt = (
         f"Autonomously hunt the YesWeHack program \"{p['title']}\" (slug: {p['slug']}).\n\n"
-        "Follow CLAUDE.md in this directory and read TARGET.md for the scope, seed URLs, and any "
-        "credentials. Do passive discovery, prioritise high-impact leads specific to this app, and "
-        "PROVE each candidate against its oracle before treating it as a finding. Write a "
-        "/report-yeswehack markdown for every verified finding, then output the required JSON "
-        "(program_slug, status, summary, findings[], leads_unverified[]). Stay strictly within the "
-        "in-scope allowlist and the guardrails. Your budget is limited — be fast and decisive; if a "
-        "lead shows no signal quickly, log it as a lead and move on."
+        "Follow CLAUDE.md and read TARGET.md (scope, seeds, creds, and the Memory section). Do "
+        "passive discovery, prioritise high-impact leads specific to this app, and PROVE each "
+        "candidate against its oracle before treating it as a finding. There is NO target count — "
+        "zero proven findings is a correct outcome. Write a /report-yeswehack markdown for every "
+        "verified finding, then output the required JSON (program_slug, status, summary, findings[], "
+        "leads_unverified[]). Stay strictly in scope. Be fast; log dead ends as leads and move on."
     )
     (ws / "run_prompt.md").write_text(prompt)
     return ws
@@ -266,12 +381,9 @@ def hunter_env(allow, out_hosts, args, capture_env):
     env = os.environ.copy()
     env["AUTOHUNT_SCOPE"] = " ".join(allow)
     env["AUTOHUNT_OUT_OF_SCOPE"] = " ".join(out_hosts)
-    safe = []
     if args.oob:
         env["AUTOHUNT_OOB"] = args.oob
-        safe.append(args.oob)
-    if safe:
-        env["AUTOHUNT_SAFE_HOSTS"] = " ".join(safe)
+        env["AUTOHUNT_SAFE_HOSTS"] = args.oob
     env.update(capture_env)
     return env
 
@@ -280,12 +392,10 @@ def hunter_env(allow, out_hosts, args, capture_env):
 # capture layer (pluggable)
 # --------------------------------------------------------------------------- #
 def start_capture(mode, ws):
-    """Return (proc_or_None, env_dict). Passive upstream proxy logging the agent's traffic."""
     if mode == "none":
         return None, {}
     if mode == "caido":
-        log("capture=caido not yet wired (needs caido-cli + instance claim + PAT + CA import); "
-            "running WITHOUT capture. Use --capture mitmdump or set up caido-cli manually.")
+        log("capture=caido not yet wired (needs caido-cli + claim + PAT + CA); running WITHOUT capture.")
         return None, {}
     if mode == "mitmdump":
         if not shutil.which("mitmdump"):
@@ -298,7 +408,7 @@ def start_capture(mode, ws):
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         ca = Path.home() / ".mitmproxy" / "mitmproxy-ca-cert.pem"
-        for _ in range(25):  # mitmdump generates the CA on first start
+        for _ in range(25):
             if ca.exists():
                 break
             time.sleep(0.2)
@@ -331,7 +441,7 @@ def stop_capture(proc):
 # --------------------------------------------------------------------------- #
 # claude invocations
 # --------------------------------------------------------------------------- #
-def run_claude(prompt, schema, ws, env, args, max_turns, max_budget):
+def run_claude(prompt, schema, ws, env, args, max_turns, max_budget, model=None):
     cmd = ["claude", "-p", prompt,
            "--add-dir", str(SKILLS),
            "--settings", str(ws / ".claude" / "settings.json"),
@@ -343,8 +453,9 @@ def run_claude(prompt, schema, ws, env, args, max_turns, max_budget):
            "--session-id", str(uuid.uuid4())]
     if args.permission_mode == "bypassPermissions":
         cmd.append("--dangerously-skip-permissions")
-    if args.model:
-        cmd += ["--model", args.model]
+    m = model or args.model
+    if m:
+        cmd += ["--model", m]
     try:
         proc = subprocess.run(cmd, cwd=str(ws), env=env, capture_output=True, text=True,
                               timeout=args.timeout, stdin=subprocess.DEVNULL)
@@ -357,18 +468,16 @@ def run_claude(prompt, schema, ws, env, args, max_turns, max_budget):
     try:
         return json.loads(proc.stdout)
     except json.JSONDecodeError:
-        # fall back: last JSON object in stdout
-        m = re.findall(r"\{.*\}", proc.stdout, re.DOTALL)
-        if m:
+        m2 = re.findall(r"\{.*\}", proc.stdout, re.DOTALL)
+        if m2:
             try:
-                return json.loads(m[-1])
+                return json.loads(m2[-1])
             except Exception:
                 pass
         return {"_unparsed": proc.stdout[-2000:], "_stderr": proc.stderr[-2000:]}
 
 
 def extract_structured(result):
-    """Pull the findings object from a claude --output-format json result."""
     if not isinstance(result, dict):
         return None
     so = result.get("structured_output")
@@ -385,15 +494,109 @@ def extract_structured(result):
     return None
 
 
+def phase_info(result, name):
+    if not isinstance(result, dict):
+        return {"name": name, "cost": 0.0, "turns": 0, "in": 0, "out": 0, "subtype": "error"}
+    u = result.get("usage") or {}
+    return {"name": name, "cost": float(result.get("total_cost_usd") or 0),
+            "turns": result.get("num_turns") or 0,
+            "in": u.get("input_tokens", 0) or 0, "out": u.get("output_tokens", 0) or 0,
+            "subtype": result.get("subtype")}
+
+
 def run_verifier(finding, ws, env, args):
     prompt = VERIFIER_PROMPT.read_text()
     for k in ("title", "vuln_class", "severity", "asset", "endpoint", "oracle", "evidence"):
         prompt = prompt.replace("{" + k + "}", str(finding.get(k, "")))
     result = run_claude(prompt, VERIFIER_SCHEMA, ws, env, args,
-                        max_turns=args.verify_max_turns, max_budget=args.verify_budget)
-    verdict = extract_structured(result)
-    cost = result.get("total_cost_usd", 0) if isinstance(result, dict) else 0
-    return verdict, (cost or 0)
+                        args.verify_max_turns, args.verify_budget, model=args.verify_model)
+    return extract_structured(result), phase_info(result, "verify")
+
+
+# --------------------------------------------------------------------------- #
+# hunting: single vs pipeline
+# --------------------------------------------------------------------------- #
+def hunt_single(p, ws, env, args, mem):
+    res = run_claude((ws / "run_prompt.md").read_text(), FINDINGS_SCHEMA.read_text(), ws, env, args,
+                     args.max_turns, args.max_budget_usd)
+    ph = phase_info(res, "hunt")
+    s = extract_structured(res)
+    if s is None:
+        return {"ok": False, "verified": [], "leads": [], "tested": [], "phases": [ph],
+                "subtype": ph["subtype"]}
+    verified = [f for f in s.get("findings", []) if f.get("verified")]
+    leads = s.get("leads_unverified", [])
+    return {"ok": True, "verified": verified, "leads": leads, "tested": [], "phases": [ph]}
+
+
+def _prio(l):
+    return {"high": 0, "medium": 1, "low": 2}.get(str(l.get("priority", "medium")).lower(), 1)
+
+
+def hunt_pipeline(p, ws, env, args, mem):
+    phases = []
+
+    # A. recon
+    rres = run_claude((AGENTS / "recon.md").read_text(), (SCHEMAS / "recon.schema.json").read_text(),
+                      ws, env, args, args.recon_turns, args.recon_budget)
+    phases.append(phase_info(rres, "recon"))
+    recon = extract_structured(rres) or {}
+    merge_recon(mem, recon)
+
+    # B. leads
+    lres = run_claude((AGENTS / "leads.md").read_text(), (SCHEMAS / "leads.schema.json").read_text(),
+                      ws, env, args, args.leads_turns, args.leads_budget)
+    phases.append(phase_info(lres, "leads"))
+    gen_leads = (extract_structured(lres) or {}).get("leads", [])
+
+    # candidate pool = freshly generated + still-open from memory; dedupe
+    pool, seen = [], set()
+    for l in gen_leads + [l for l in mem["leads"] if l.get("status") == "open"]:
+        k = lead_key(l)
+        if k and k not in seen:
+            seen.add(k)
+            pool.append(l)
+    pool.sort(key=_prio)
+
+    # budget: how many per-lead hunters can we afford within the per-target ceiling?
+    spent = sum(ph["cost"] for ph in phases)
+    affordable = int((args.max_budget_usd - spent) // args.lead_budget) if args.lead_budget > 0 else len(pool)
+    n = max(0, min(args.max_leads, affordable, len(pool)))
+    to_hunt = pool[:n]
+    if n < min(args.max_leads, len(pool)):
+        log(f"  budget caps lead-hunters to {n}/{len(pool)} (spent ${spent:.2f} of ${args.max_budget_usd}).")
+
+    # C. per-lead hunters (bounded concurrency)
+    def hunt_one(lead):
+        try:
+            prompt = (AGENTS / "hunt-lead.md").read_text() + "\n\nLEAD:\n" + json.dumps(lead, ensure_ascii=False)
+            hres = run_claude(prompt, (SCHEMAS / "hunt_lead.schema.json").read_text(), ws, env, args,
+                              args.max_turns, args.lead_budget)
+        except Exception as e:
+            hres = {"_error": str(e)[:200]}
+        return lead, hres
+
+    results = []
+    if args.lead_concurrency > 1 and len(to_hunt) > 1:
+        with ThreadPoolExecutor(max_workers=args.lead_concurrency) as ex:
+            results = list(ex.map(hunt_one, to_hunt))
+    else:
+        results = [hunt_one(l) for l in to_hunt]
+
+    verified, tested = [], []
+    for lead, hres in results:
+        phases.append(phase_info(hres, "hunt"))
+        hs = extract_structured(hres) or {}
+        if hs.get("verified") and hs.get("oracle"):
+            hs.setdefault("dedupe_key", f"{hs.get('vuln_class')}:{hs.get('asset')}:{hs.get('endpoint')}")
+            verified.append(hs)
+            set_lead_status(mem, lead, "reported")
+        else:
+            tested.append({"what": lead.get("title", ""), "why": hs.get("why_unproven", "not proven")})
+            set_lead_status(mem, lead, "hunted")
+
+    ok = (extract_structured(rres) is not None) or bool(gen_leads) or bool(verified)
+    return {"ok": ok, "verified": verified, "leads": gen_leads, "tested": tested, "phases": phases}
 
 
 # --------------------------------------------------------------------------- #
@@ -413,7 +616,7 @@ def discord_send(content=None, embeds=None, file_path=None):
         payload["content"] = content[:1900]
     if embeds:
         payload["embeds"] = embeds[:10]
-    for attempt in range(4):
+    for _ in range(4):
         try:
             if file_path and Path(file_path).exists():
                 with open(file_path, "rb") as fh:
@@ -437,20 +640,17 @@ def discord_send(content=None, embeds=None, file_path=None):
 
 
 def notify_finding(p, f, ws):
-    sev = f.get("severity", "?").upper()
+    sev = str(f.get("severity", "?")).upper()
     emoji = {"CRITICAL": "🟥", "HIGH": "🟧", "MEDIUM": "🟨", "LOW": "🟦"}.get(sev, "⬜")
     content = f"{emoji} Verified **{f.get('title','(untitled)')}** — {sev} on `{f.get('asset','')}` ({p['slug']})"
-    embed = {
-        "title": f.get("title", "")[:256],
-        "description": (f.get("summary") or f.get("evidence", ""))[:1500],
-        "fields": [
-            {"name": "Class", "value": str(f.get("vuln_class", "?")), "inline": True},
-            {"name": "Severity", "value": sev, "inline": True},
-            {"name": "Endpoint", "value": str(f.get("endpoint", "?"))[:200], "inline": False},
-            {"name": "Oracle (proof)", "value": str(f.get("oracle", "?"))[:500], "inline": False},
-            {"name": "Program", "value": f"{p['title']} ({p['slug']})", "inline": False},
-        ],
-    }
+    embed = {"title": str(f.get("title", ""))[:256],
+             "description": str(f.get("evidence", ""))[:1500],
+             "fields": [
+                 {"name": "Class", "value": str(f.get("vuln_class", "?")), "inline": True},
+                 {"name": "Severity", "value": sev, "inline": True},
+                 {"name": "Endpoint", "value": str(f.get("endpoint", "?"))[:200], "inline": False},
+                 {"name": "Oracle (proof)", "value": str(f.get("oracle", "?"))[:600], "inline": False},
+                 {"name": "Program", "value": f"{p['title']} ({p['slug']})", "inline": False}]}
     report = None
     rp = f.get("report_path")
     if rp:
@@ -460,44 +660,174 @@ def notify_finding(p, f, ws):
     discord_send(content=content, embeds=[embed], file_path=report)
 
 
+def notify_leads(p, leads):
+    if not leads:
+        return
+    rows = []
+    for l in leads[:12]:
+        rows.append(f"• **{l.get('title','')}** ({l.get('vuln_class','?')}/{l.get('priority','?')}) "
+                    f"`{l.get('asset','')}` {l.get('endpoint','')}")
+    content = (f"🔎 UNVERIFIED LEADS — manual review ({p['slug']}, {len(leads)} new):\n" + "\n".join(rows))
+    discord_send(content=content)
+
+
 # --------------------------------------------------------------------------- #
-# prereqs
+# monitoring mode
+# --------------------------------------------------------------------------- #
+def probe_url(url, timeout=15):
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    req = urllib.request.Request(url, headers={"User-Agent": "autohunt-monitor/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+            body = r.read(200000)
+            return {"status": getattr(r, "status", r.getcode()),
+                    "hash": hashlib.sha256(body).hexdigest()[:16]}
+    except urllib.error.HTTPError as e:
+        return {"status": e.code, "hash": "httperror"}
+    except Exception as e:
+        return {"status": 0, "hash": "err:" + type(e).__name__}
+
+
+def watch_urls(mem, seeds):
+    urls = []
+    for h in mem["recon"]["live_hosts"]:
+        urls.append(h if h.startswith("http") else "https://" + h)
+    urls += [u for u in mem["recon"]["endpoints"] if str(u).startswith("http")]
+    urls += [u for u in mem["recon"]["js_files"] if str(u).startswith("http")]
+    if not urls:
+        urls = list(seeds)
+    seen, out = set(), []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out[:30]
+
+
+def monitor_pass(programs, args):
+    targets = [p for p in programs if (not args.program or p["slug"] == args.program)]
+    if args.limit:
+        targets = targets[: args.limit]
+    log(f"monitor: checking {len(targets)} program(s).")
+    total_changes = 0
+    for p in targets:
+        ws = HUNTS / p["slug"]
+        if not ws.exists():
+            continue  # never hunted → nothing to baseline against yet
+        allow, seeds, out_hosts = compute_scope(p)
+        mem = load_memory(ws)
+        baseline = mem["monitor_baseline"]
+        urls = watch_urls(mem, seeds)
+        changes = []
+        for u in urls:
+            cur = probe_url(u)
+            old = baseline.get(u)
+            baseline[u] = {**cur, "checked_at": now_iso()}
+            if old is None:
+                continue  # seeding pass — no alert
+            if old.get("status") != cur["status"] or old.get("hash") != cur["hash"]:
+                changes.append({"url": u, "old": {"status": old.get("status"), "hash": old.get("hash")},
+                                "new": cur})
+            time.sleep(0.3)
+        save_memory(ws, mem)
+        if not changes:
+            continue
+        log(f"  {p['slug']}: {len(changes)} change(s) detected.")
+        env = hunter_env(allow, out_hosts, args, {})
+        for ch in changes:
+            prompt = (AGENTS / "monitor-triage.md").read_text() + "\n\nCHANGE:\n" + json.dumps(ch, ensure_ascii=False)
+            res = run_claude(prompt, (SCHEMAS / "monitor.schema.json").read_text(), ws, env, args,
+                             args.verify_max_turns, args.verify_budget, model=args.verify_model)
+            v = extract_structured(res) or {}
+            if v.get("worth_investigating"):
+                total_changes += 1
+                append_jsonl(HUNTS / "alerts.jsonl", {
+                    "ts": now_iso(), "slug": p["slug"], "url": ch["url"],
+                    "severity_guess": v.get("severity_guess"), "reason": v.get("reason", ""),
+                    "suggested_action": v.get("suggested_action", "")})
+                discord_send(content=(f"📡 Change worth a look on `{ch['url']}` ({p['slug']}) — "
+                                      f"{v.get('severity_guess','?')}\n{v.get('reason','')[:400]}\n"
+                                      f"→ {v.get('suggested_action','')[:300]}"))
+            else:
+                log(f"    change on {ch['url']} judged not worth investigating: {v.get('reason','')[:100]}")
+    log(f"monitor: done. {total_changes} change(s) flagged for review.")
+    if total_changes:
+        discord_send(content=f"📡 autohunt monitor: {total_changes} change(s) flagged for review.")
+
+
+# --------------------------------------------------------------------------- #
+# cost report
+# --------------------------------------------------------------------------- #
+def new_run_cost():
+    return {"by_phase": defaultdict(lambda: {"cost": 0.0, "turns": 0, "in": 0, "out": 0, "n": 0}),
+            "by_program": defaultdict(float), "total": 0.0}
+
+
+def add_phase_cost(rc, slug, ph):
+    b = rc["by_phase"][ph["name"]]
+    b["cost"] += ph["cost"]; b["turns"] += ph["turns"]; b["in"] += ph["in"]; b["out"] += ph["out"]; b["n"] += 1
+    rc["by_program"][slug] += ph["cost"]
+    rc["total"] += ph["cost"]
+
+
+def write_cost_report(rc):
+    lines = ["# autohunt cost report", "", f"_Run at {now_iso()}_", "",
+             f"**Total: ${rc['total']:.2f}**", "", "## By phase", "",
+             "| Phase | calls | $ | turns | in_tok | out_tok |", "|---|---|---|---|---|---|"]
+    for name, b in sorted(rc["by_phase"].items()):
+        lines.append(f"| {name} | {b['n']} | {b['cost']:.2f} | {b['turns']} | {b['in']} | {b['out']} |")
+    lines += ["", "## By program", "", "| Program | $ |", "|---|---|"]
+    for slug, c in sorted(rc["by_program"].items(), key=lambda x: -x[1]):
+        lines.append(f"| {slug} | {c:.2f} |")
+    (HUNTS / "cost_report.md").write_text("\n".join(lines) + "\n")
+
+
+# --------------------------------------------------------------------------- #
+# prereqs / args / queue
 # --------------------------------------------------------------------------- #
 def check_prereqs(args):
     if not args.dry_run and not shutil.which("claude"):
         sys.exit("`claude` CLI not found on PATH. Install Claude Code or use --dry-run.")
     missing = [t for t in RECON_TOOLS if not shutil.which(t)]
     if missing:
-        log(f"WARNING: recon tools not on PATH (hunter will have reduced capability): {', '.join(missing)}")
+        log(f"WARNING: recon tools missing (reduced capability): {', '.join(missing)} — run ./install_tools.sh")
     if not os.environ.get("DISCORD_WEBHOOK_URL") and not args.dry_run:
         log("WARNING: DISCORD_WEBHOOK_URL not set — notifications will be skipped.")
 
 
-# --------------------------------------------------------------------------- #
-# main
-# --------------------------------------------------------------------------- #
 def parse_args():
-    ap = argparse.ArgumentParser(description="Autonomous YesWeHack hunting loop.")
-    ap.add_argument("--program", help="Hunt only this slug.")
+    ap = argparse.ArgumentParser(description="Autonomous YesWeHack hunting loop (v2).")
+    ap.add_argument("--program", help="Only this slug.")
     ap.add_argument("--limit", type=int, default=0, help="Process at most N programs.")
     ap.add_argument("--only-changed", action="store_true", help="Only new / scope-changed programs.")
     ap.add_argument("--bbp-only", action="store_true", help="Only programs with a bounty.")
-    ap.add_argument("--rescan", action="store_true", help="Re-hunt even programs already done.")
-    ap.add_argument("--dry-run", action="store_true", help="Print the queue and plan; run nothing.")
-    ap.add_argument("--no-verify", action="store_true", help="Skip the independent verifier pass.")
-    ap.add_argument("--capture", choices=["none", "mitmdump", "caido"], default="none",
-                    help="Passive traffic-capture proxy for later human review (default none).")
-    ap.add_argument("--model", default="opus", help="Model for the hunter (e.g. opus, sonnet).")
-    ap.add_argument("--permission-mode", default="bypassPermissions",
-                    help="claude permission mode (default bypassPermissions; hook enforces scope).")
-    ap.add_argument("--max-turns", type=int, default=60, help="Per-target turn cap.")
-    ap.add_argument("--max-budget-usd", type=float, default=4.0, help="Per-target $ cap.")
-    ap.add_argument("--timeout", type=int, default=2400, help="Per-target wall-clock seconds.")
-    ap.add_argument("--max-total-usd", type=float, default=50.0, help="Global $ cap for the whole run.")
-    ap.add_argument("--verify-max-turns", type=int, default=20, help="Per-finding verifier turn cap.")
-    ap.add_argument("--verify-budget", type=float, default=1.5, help="Per-finding verifier $ cap.")
-    ap.add_argument("--throttle", type=float, default=5.0, help="Seconds to sleep between targets.")
-    ap.add_argument("--oob", help="OOB canary host for SSRF/blind oracles (e.g. abc.oast.pro).")
+    ap.add_argument("--rescan", action="store_true", help="Re-hunt programs already done.")
+    ap.add_argument("--dry-run", action="store_true", help="Print the queue; run nothing.")
+    ap.add_argument("--monitor", action="store_true", help="Change-detection pass (no hunting).")
+    ap.add_argument("--mode", choices=["pipeline", "single"], default="pipeline",
+                    help="pipeline = recon→leads→per-lead agents (default); single = one agent.")
+    ap.add_argument("--no-verify", action="store_true", help="Skip the independent refuter.")
+    ap.add_argument("--capture", choices=["none", "mitmdump", "caido"], default="none")
+    ap.add_argument("--model", default="opus", help="Hunter model (e.g. opus, sonnet).")
+    ap.add_argument("--verify-model", default="opus", help="Refuter/triage model (a strong skeptic).")
+    ap.add_argument("--permission-mode", default="bypassPermissions")
+    ap.add_argument("--max-turns", type=int, default=60, help="Per hunt/lead session turn cap.")
+    ap.add_argument("--max-budget-usd", type=float, default=4.0, help="Per-target $ ceiling.")
+    ap.add_argument("--timeout", type=int, default=2400, help="Per-session wall-clock seconds.")
+    ap.add_argument("--max-total-usd", type=float, default=50.0, help="Global $ cap for the run.")
+    ap.add_argument("--max-leads", type=int, default=8, help="Max per-lead hunters per target.")
+    ap.add_argument("--lead-concurrency", type=int, default=1, help="Parallel lead hunters.")
+    ap.add_argument("--recon-budget", type=float, default=0.75)
+    ap.add_argument("--recon-turns", type=int, default=40)
+    ap.add_argument("--leads-budget", type=float, default=0.5)
+    ap.add_argument("--leads-turns", type=int, default=15)
+    ap.add_argument("--lead-budget", type=float, default=1.0, help="$ cap per per-lead hunter.")
+    ap.add_argument("--verify-max-turns", type=int, default=20)
+    ap.add_argument("--verify-budget", type=float, default=1.5)
+    ap.add_argument("--throttle", type=float, default=5.0, help="Sleep between targets.")
+    ap.add_argument("--oob", help="OOB canary host for SSRF/blind oracles.")
     return ap.parse_args()
 
 
@@ -511,7 +841,7 @@ def build_queue(programs, status, args):
         if args.only_changed and not changed:
             continue
         if rec and rec.get("status") == "done" and not args.rescan and not changed:
-            continue  # resume: skip completed & unchanged
+            continue
         q.append(p)
     if args.limit:
         q = q[: args.limit]
@@ -522,10 +852,14 @@ def main():
     args = parse_args()
     check_prereqs(args)
     HUNTS.mkdir(parents=True, exist_ok=True)
+    programs = prioritize(load_catalog(), args)
+
+    if args.monitor:
+        monitor_pass(programs, args)
+        return
+
     status = load_json(HUNTS / "status.json", {})
     index = load_json(HUNTS / "findings_index.json", {})
-
-    programs = prioritize(load_catalog(), args)
     queue = build_queue(programs, status, args)
 
     if not queue:
@@ -533,110 +867,106 @@ def main():
         return
 
     if args.dry_run:
-        print(f"Prioritized queue ({len(queue)} programs):\n")
+        print(f"Prioritized queue ({len(queue)} programs), mode={args.mode}:\n")
         for i, p in enumerate(queue, 1):
-            allow, seeds, _ = compute_scope(p)
+            allow, _, _ = compute_scope(p)
             tag = "BBP" if p["bounty"] else "VDP"
             print(f"{i:3}. {p['slug']}  [{tag} max=${p['bounty_max']}]  hosts={len(allow)}  "
                   f"e.g. {', '.join(allow[:3])}")
         print("\n(dry run — nothing executed)")
         return
 
-    log(f"Starting run over {len(queue)} program(s). model={args.model} "
-        f"per-target cap=${args.max_budget_usd}/{args.max_turns}t/{args.timeout}s "
-        f"global=${args.max_total_usd} verify={'off' if args.no_verify else 'on'} capture={args.capture}")
-    discord_send(content=f"🚀 autohunt run started — {len(queue)} program(s) queued.")
+    log(f"Run: {len(queue)} program(s). mode={args.mode} model={args.model} verify={args.verify_model} "
+        f"per-target=${args.max_budget_usd} leads≤{args.max_leads} global=${args.max_total_usd} capture={args.capture}")
+    discord_send(content=f"🚀 autohunt ({args.mode}) — {len(queue)} program(s) queued.")
 
+    rc = new_run_cost()
     total_cost = 0.0
     for i, p in enumerate(queue, 1):
         if (HUNTS / "STOP").exists():
-            log("STOP sentinel present — halting loop.")
-            discord_send(content="🛑 autohunt halted (STOP sentinel).")
+            log("STOP sentinel — halting.")
+            discord_send(content="🛑 autohunt halted (STOP).")
             break
         if total_cost >= args.max_total_usd:
             log(f"Global budget ${args.max_total_usd} reached — halting.")
-            discord_send(content=f"💰 autohunt halted — global budget ${args.max_total_usd} reached.")
+            discord_send(content=f"💰 autohunt halted — global budget reached.")
             break
 
         allow, seeds, out_hosts = compute_scope(p)
-        log(f"[{i}/{len(queue)}] {p['slug']} — {len(allow)} host(s), max bounty ${p['bounty_max']}")
-        status[p["slug"]] = {"status": "running", "started_at": now_iso(),
-                             "scope_hash": p["_scope_hash"]}
+        log(f"[{i}/{len(queue)}] {p['slug']} — {len(allow)} host(s), max ${p['bounty_max']}")
+        status[p["slug"]] = {"status": "running", "started_at": now_iso(), "scope_hash": p["_scope_hash"]}
         save_json(HUNTS / "status.json", status)
 
         ws = setup_workspace(p, allow, seeds, out_hosts, args)
+        mem = load_memory(ws)
         cap_proc, cap_env = start_capture(args.capture, ws)
         env = hunter_env(allow, out_hosts, args, cap_env)
-
         record = {"slug": p["slug"], "started_at": now_iso(), "scope_hash": p["_scope_hash"],
-                  "model": args.model}
+                  "mode": args.mode, "model": args.model}
         try:
-            result = run_claude((ws / "run_prompt.md").read_text(), SCHEMA.read_text(), ws, env,
-                                args, args.max_turns, args.max_budget_usd)
+            hr = hunt_pipeline(p, ws, env, args, mem) if args.mode == "pipeline" \
+                else hunt_single(p, ws, env, args, mem)
         finally:
             stop_capture(cap_proc)
 
-        if result.get("_timeout"):
-            record.update(status="failed", subtype="timeout")
-        elif result.get("_empty") or result.get("_unparsed"):
-            record.update(status="failed", subtype="unparsed",
-                          error=(result.get("_stderr") or result.get("_unparsed", ""))[:500])
-        else:
-            cost = float(result.get("total_cost_usd") or 0)
-            total_cost += cost
-            subtype = result.get("subtype")
-            record.update(subtype=subtype, num_turns=result.get("num_turns"),
-                          total_cost_usd=cost, session_id=result.get("session_id"))
-            structured = extract_structured(result)
-            if structured is None:
-                # hit a cap (max-turns/budget) or errored before emitting JSON → retryable
-                record["status"] = "failed"
-                log(f"  no structured output (subtype={subtype}) — marked failed/retryable")
-                structured = {}
-            else:
-                record["status"] = "done"
-            verified = [f for f in structured.get("findings", []) if f.get("verified")]
-            leads = structured.get("leads_unverified", [])
-            record["leads_count"] = len(leads)
+        for ph in hr["phases"]:
+            add_phase_cost(rc, p["slug"], ph)
+        target_cost = sum(ph["cost"] for ph in hr["phases"])
 
+        if not hr["ok"]:
+            record.update(status="failed", subtype=hr.get("subtype", "no_output"))
+            log("  no usable output — marked failed/retryable")
+        else:
+            record["status"] = "done"
             reported = []
-            for f in verified:
-                # independent verifier (refuter)
+            for f in hr["verified"]:
                 if not args.no_verify:
-                    verdict, vcost = run_verifier(f, ws, env, args)
-                    total_cost += vcost
+                    verdict, vph = run_verifier(f, ws, env, args)
+                    add_phase_cost(rc, p["slug"], vph)
+                    target_cost += vph["cost"]
                     if verdict and verdict.get("refuted"):
-                        log(f"  refuted: {f.get('title')} — {verdict.get('reason','')[:120]}")
+                        log(f"  refuted: {f.get('title')} — {str(verdict.get('reason',''))[:120]}")
+                        record_tested(mem, [{"what": f.get("title"), "why": "refuted by verifier"}])
                         continue
-                # dedupe across runs
                 key = f.get("dedupe_key") or f"{f.get('vuln_class')}:{f.get('asset')}:{f.get('endpoint')}"
                 if key in index:
-                    log(f"  duplicate (already seen): {f.get('title')}")
+                    log(f"  duplicate: {f.get('title')}")
                     continue
                 index[key] = {"slug": p["slug"], "title": f.get("title"),
                               "report_path": f.get("report_path"), "first_seen": now_iso()}
                 notify_finding(p, f, ws)
-                reported.append({"title": f.get("title"), "severity": f.get("severity"),
-                                 "dedupe_key": key, "report_path": f.get("report_path")})
+                record_finding_mem(mem, f)
+                reported.append({"title": f.get("title"), "severity": f.get("severity"), "dedupe_key": key})
 
-            record["findings_count"] = len(verified)
-            record["verified_reported"] = len(reported)
-            record["reports"] = reported
+            new_leads = merge_leads(mem, hr["leads"])
+            to_alert = [l for l in new_leads if not l.get("alerted")]
+            notify_leads(p, to_alert)
+            for l in to_alert:
+                l["alerted"] = True
+            record_tested(mem, hr["tested"])
+
+            record.update(findings_count=len(hr["verified"]), verified_reported=len(reported),
+                          leads_count=len(hr["leads"]), new_leads=len(new_leads), reports=reported)
             save_json(HUNTS / "findings_index.json", index)
-            log(f"  done: {len(verified)} verified, {len(reported)} new reported, "
-                f"{len(leads)} leads, ${cost:.2f}")
+            log(f"  done: {len(hr['verified'])} verified, {len(reported)} reported, "
+                f"{len(new_leads)} new leads, ${target_cost:.2f}")
 
+        record["total_cost_usd"] = round(target_cost, 4)
+        record["phases"] = hr["phases"]
+        total_cost += target_cost
+        save_memory(ws, mem)
         record["finished_at"] = now_iso()
         append_ledger(record)
         status[p["slug"]] = {k: record.get(k) for k in
                              ("status", "subtype", "scope_hash", "findings_count",
-                              "verified_reported", "total_cost_usd", "session_id")}
+                              "verified_reported", "total_cost_usd")}
         status[p["slug"]]["last_run"] = record["finished_at"]
         save_json(HUNTS / "status.json", status)
         time.sleep(args.throttle)
 
-    log(f"Run complete. Spent ~${total_cost:.2f} across {len(queue)} program(s).")
-    discord_send(content=f"✅ autohunt run complete — ~${total_cost:.2f} spent.")
+    write_cost_report(rc)
+    log(f"Run complete. ~${total_cost:.2f} total. Cost report: {HUNTS / 'cost_report.md'}")
+    discord_send(content=f"✅ autohunt complete — ~${total_cost:.2f}. See cost_report.md.")
 
 
 if __name__ == "__main__":

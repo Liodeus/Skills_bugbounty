@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verified", "title", "vuln_class", "asset", "endpoint"],
+  "properties": {
+    "verified": { "type": "boolean", "description": "true ONLY if exploitation was executed against a concrete oracle. Otherwise false." },
+    "title": { "type": "string" },
+    "vuln_class": { "type": "string", "enum": ["ssrf", "sqli", "rce", "cmdi", "ssti", "xxe", "idor", "rbac", "xss", "bxss", "ato", "secret", "business-logic", "other"] },
+    "severity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"] },
+    "asset": { "type": "string" },
+    "endpoint": { "type": "string" },
+    "oracle": { "type": "string", "description": "What concretely proved it (required when verified=true)." },
+    "evidence": { "type": "string", "description": "Reproducible proof: request(s)+response field(s) or ordered steps (required when verified=true)." },
+    "report_path": { "type": "string", "description": "Filename of the /report-yeswehack markdown written in the workspace (when verified=true)." },
+    "dedupe_key": { "type": "string", "description": "Stable 'vuln_class:host:normalized-endpoint'." },
+    "why_unproven": { "type": "string", "description": "When verified=false: exactly what's missing (needs creds, needs browser, WAF blocked, not reproducible, endpoint doesn't exist, etc.)." }
+  }
+}
