@@ -38,7 +38,6 @@ import urllib.error
 import urllib.request
 import uuid
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -336,6 +335,12 @@ def setup_workspace(p, allow, seeds, out_hosts, args):
             except OSError:
                 pass
 
+    # Install native Claude Code subagents (recon, hunter) for planner mode.
+    agents_dir = ws / ".claude" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    for f in (AGENTS / "subagents").glob("*.md"):
+        shutil.copy(f, agents_dir / f.name)
+
     settings = {"hooks": {"PreToolUse": [{"matcher": "Bash",
                 "hooks": [{"type": "command", "command": f"python3 {HOOK}"}]}]}}
     save_json(ws / ".claude" / "settings.json", settings)
@@ -381,6 +386,8 @@ def hunter_env(allow, out_hosts, args, capture_env):
     env = os.environ.copy()
     env["AUTOHUNT_SCOPE"] = " ".join(allow)
     env["AUTOHUNT_OUT_OF_SCOPE"] = " ".join(out_hosts)
+    env["AUTOHUNT_MAX_RPS"] = str(args.max_rps)
+    env["AUTOHUNT_MAX_CONC"] = str(args.max_conc)
     if args.oob:
         env["AUTOHUNT_OOB"] = args.oob
         env["AUTOHUNT_SAFE_HOSTS"] = args.oob
@@ -496,12 +503,13 @@ def extract_structured(result):
 
 def phase_info(result, name):
     if not isinstance(result, dict):
-        return {"name": name, "cost": 0.0, "turns": 0, "in": 0, "out": 0, "subtype": "error"}
+        return {"name": name, "cost": 0.0, "turns": 0, "in": 0, "out": 0, "subtype": "error", "models": {}}
     u = result.get("usage") or {}
     return {"name": name, "cost": float(result.get("total_cost_usd") or 0),
             "turns": result.get("num_turns") or 0,
             "in": u.get("input_tokens", 0) or 0, "out": u.get("output_tokens", 0) or 0,
-            "subtype": result.get("subtype")}
+            "subtype": result.get("subtype"),
+            "models": result.get("modelUsage") or result.get("model_usage") or {}}
 
 
 def run_verifier(finding, ws, env, args):
@@ -529,74 +537,28 @@ def hunt_single(p, ws, env, args, mem):
     return {"ok": True, "verified": verified, "leads": leads, "tested": [], "phases": [ph]}
 
 
-def _prio(l):
-    return {"high": 0, "medium": 1, "low": 2}.get(str(l.get("priority", "medium")).lower(), 1)
-
-
-def hunt_pipeline(p, ws, env, args, mem):
-    phases = []
-
-    # A. recon
-    rres = run_claude((AGENTS / "recon.md").read_text(), (SCHEMAS / "recon.schema.json").read_text(),
-                      ws, env, args, args.recon_turns, args.recon_budget)
-    phases.append(phase_info(rres, "recon"))
-    recon = extract_structured(rres) or {}
-    merge_recon(mem, recon)
-
-    # B. leads
-    lres = run_claude((AGENTS / "leads.md").read_text(), (SCHEMAS / "leads.schema.json").read_text(),
-                      ws, env, args, args.leads_turns, args.leads_budget)
-    phases.append(phase_info(lres, "leads"))
-    gen_leads = (extract_structured(lres) or {}).get("leads", [])
-
-    # candidate pool = freshly generated + still-open from memory; dedupe
-    pool, seen = [], set()
-    for l in gen_leads + [l for l in mem["leads"] if l.get("status") == "open"]:
-        k = lead_key(l)
-        if k and k not in seen:
-            seen.add(k)
-            pool.append(l)
-    pool.sort(key=_prio)
-
-    # budget: how many per-lead hunters can we afford within the per-target ceiling?
-    spent = sum(ph["cost"] for ph in phases)
-    affordable = int((args.max_budget_usd - spent) // args.lead_budget) if args.lead_budget > 0 else len(pool)
-    n = max(0, min(args.max_leads, affordable, len(pool)))
-    to_hunt = pool[:n]
-    if n < min(args.max_leads, len(pool)):
-        log(f"  budget caps lead-hunters to {n}/{len(pool)} (spent ${spent:.2f} of ${args.max_budget_usd}).")
-
-    # C. per-lead hunters (bounded concurrency)
-    def hunt_one(lead):
-        try:
-            prompt = (AGENTS / "hunt-lead.md").read_text() + "\n\nLEAD:\n" + json.dumps(lead, ensure_ascii=False)
-            hres = run_claude(prompt, (SCHEMAS / "hunt_lead.schema.json").read_text(), ws, env, args,
-                              args.max_turns, args.lead_budget)
-        except Exception as e:
-            hres = {"_error": str(e)[:200]}
-        return lead, hres
-
-    results = []
-    if args.lead_concurrency > 1 and len(to_hunt) > 1:
-        with ThreadPoolExecutor(max_workers=args.lead_concurrency) as ex:
-            results = list(ex.map(hunt_one, to_hunt))
-    else:
-        results = [hunt_one(l) for l in to_hunt]
-
-    verified, tested = [], []
-    for lead, hres in results:
-        phases.append(phase_info(hres, "hunt"))
-        hs = extract_structured(hres) or {}
-        if hs.get("verified") and hs.get("oracle"):
-            hs.setdefault("dedupe_key", f"{hs.get('vuln_class')}:{hs.get('asset')}:{hs.get('endpoint')}")
-            verified.append(hs)
-            set_lead_status(mem, lead, "reported")
-        else:
-            tested.append({"what": lead.get("title", ""), "why": hs.get("why_unproven", "not proven")})
-            set_lead_status(mem, lead, "hunted")
-
-    ok = (extract_structured(rres) is not None) or bool(gen_leads) or bool(verified)
-    return {"ok": ok, "verified": verified, "leads": gen_leads, "tested": tested, "phases": phases}
+def hunt_planner(p, ws, env, args, mem):
+    """Single planner session that inspects the surface, then dispatches native subagents
+    (recon, hunter) only where warranted. One claude -p; subagents run inside it (governed by
+    the same scope+rate firewall hook). Per-target --max-budget-usd is the global ceiling."""
+    prompt = ((AGENTS / "planner.md").read_text()
+              + f"\n\nProgram: \"{p['title']}\" (slug: {p['slug']}). Follow CLAUDE.md and TARGET.md.")
+    res = run_claude(prompt, (SCHEMAS / "planner.schema.json").read_text(), ws, env, args,
+                     args.max_turns, args.max_budget_usd)
+    ph = phase_info(res, "planner")
+    s = extract_structured(res)
+    if s is None:
+        return {"ok": False, "verified": [], "leads": [], "tested": [], "phases": [ph],
+                "subtype": ph["subtype"]}
+    merge_recon(mem, s.get("recon", {}))
+    verified = []
+    for f in s.get("findings", []):
+        if f.get("verified") and f.get("oracle"):
+            f.setdefault("dedupe_key", f"{f.get('vuln_class')}:{f.get('asset')}:{f.get('endpoint')}")
+            verified.append(f)
+    return {"ok": True, "verified": verified,
+            "leads": s.get("leads_unverified", []), "tested": s.get("tested_ruled_out", []),
+            "phases": [ph]}
 
 
 # --------------------------------------------------------------------------- #
@@ -762,7 +724,8 @@ def monitor_pass(programs, args):
 # --------------------------------------------------------------------------- #
 def new_run_cost():
     return {"by_phase": defaultdict(lambda: {"cost": 0.0, "turns": 0, "in": 0, "out": 0, "n": 0}),
-            "by_program": defaultdict(float), "total": 0.0}
+            "by_program": defaultdict(float),
+            "by_model": defaultdict(lambda: {"cost": 0.0, "in": 0, "out": 0}), "total": 0.0}
 
 
 def add_phase_cost(rc, slug, ph):
@@ -770,6 +733,11 @@ def add_phase_cost(rc, slug, ph):
     b["cost"] += ph["cost"]; b["turns"] += ph["turns"]; b["in"] += ph["in"]; b["out"] += ph["out"]; b["n"] += 1
     rc["by_program"][slug] += ph["cost"]
     rc["total"] += ph["cost"]
+    for mname, mu in (ph.get("models") or {}).items():
+        bm = rc["by_model"][mname]
+        bm["cost"] += float(mu.get("costUSD", mu.get("cost", 0)) or 0)
+        bm["in"] += mu.get("inputTokens", mu.get("input_tokens", 0)) or 0
+        bm["out"] += mu.get("outputTokens", mu.get("output_tokens", 0)) or 0
 
 
 def write_cost_report(rc):
@@ -778,6 +746,10 @@ def write_cost_report(rc):
              "| Phase | calls | $ | turns | in_tok | out_tok |", "|---|---|---|---|---|---|"]
     for name, b in sorted(rc["by_phase"].items()):
         lines.append(f"| {name} | {b['n']} | {b['cost']:.2f} | {b['turns']} | {b['in']} | {b['out']} |")
+    if rc["by_model"]:
+        lines += ["", "## By model", "", "| Model | $ | in_tok | out_tok |", "|---|---|---|---|"]
+        for name, b in sorted(rc["by_model"].items(), key=lambda x: -x[1]["cost"]):
+            lines.append(f"| {name} | {b['cost']:.2f} | {b['in']} | {b['out']} |")
     lines += ["", "## By program", "", "| Program | $ |", "|---|---|"]
     for slug, c in sorted(rc["by_program"].items(), key=lambda x: -x[1]):
         lines.append(f"| {slug} | {c:.2f} |")
@@ -806,27 +778,23 @@ def parse_args():
     ap.add_argument("--rescan", action="store_true", help="Re-hunt programs already done.")
     ap.add_argument("--dry-run", action="store_true", help="Print the queue; run nothing.")
     ap.add_argument("--monitor", action="store_true", help="Change-detection pass (no hunting).")
-    ap.add_argument("--mode", choices=["pipeline", "single"], default="pipeline",
-                    help="pipeline = recon→leads→per-lead agents (default); single = one agent.")
+    ap.add_argument("--mode", choices=["planner", "single"], default="planner",
+                    help="planner = one planner agent dispatches recon/hunter subagents (default); "
+                         "single = one monolithic agent.")
     ap.add_argument("--no-verify", action="store_true", help="Skip the independent refuter.")
     ap.add_argument("--capture", choices=["none", "mitmdump", "caido"], default="none")
-    ap.add_argument("--model", default="opus", help="Hunter model (e.g. opus, sonnet).")
+    ap.add_argument("--model", default="opus", help="Planner/hunter model (e.g. opus, sonnet).")
     ap.add_argument("--verify-model", default="opus", help="Refuter/triage model (a strong skeptic).")
     ap.add_argument("--permission-mode", default="bypassPermissions")
-    ap.add_argument("--max-turns", type=int, default=60, help="Per hunt/lead session turn cap.")
-    ap.add_argument("--max-budget-usd", type=float, default=4.0, help="Per-target $ ceiling.")
-    ap.add_argument("--timeout", type=int, default=2400, help="Per-session wall-clock seconds.")
+    ap.add_argument("--max-turns", type=int, default=80, help="Per-session turn cap (planner + its subagents).")
+    ap.add_argument("--max-budget-usd", type=float, default=5.0, help="Per-target $ ceiling (global, incl. subagents).")
+    ap.add_argument("--timeout", type=int, default=3000, help="Per-session wall-clock seconds.")
     ap.add_argument("--max-total-usd", type=float, default=50.0, help="Global $ cap for the run.")
-    ap.add_argument("--max-leads", type=int, default=8, help="Max per-lead hunters per target.")
-    ap.add_argument("--lead-concurrency", type=int, default=1, help="Parallel lead hunters.")
-    ap.add_argument("--recon-budget", type=float, default=0.75)
-    ap.add_argument("--recon-turns", type=int, default=40)
-    ap.add_argument("--leads-budget", type=float, default=0.5)
-    ap.add_argument("--leads-turns", type=int, default=15)
-    ap.add_argument("--lead-budget", type=float, default=1.0, help="$ cap per per-lead hunter.")
     ap.add_argument("--verify-max-turns", type=int, default=20)
     ap.add_argument("--verify-budget", type=float, default=1.5)
     ap.add_argument("--throttle", type=float, default=5.0, help="Sleep between targets.")
+    ap.add_argument("--max-rps", type=float, default=8, help="Enforced max request-rate flag for scan tools.")
+    ap.add_argument("--max-conc", type=float, default=10, help="Enforced max concurrency/threads flag for scan tools.")
     ap.add_argument("--oob", help="OOB canary host for SSRF/blind oracles.")
     return ap.parse_args()
 
@@ -877,7 +845,7 @@ def main():
         return
 
     log(f"Run: {len(queue)} program(s). mode={args.mode} model={args.model} verify={args.verify_model} "
-        f"per-target=${args.max_budget_usd} leads≤{args.max_leads} global=${args.max_total_usd} capture={args.capture}")
+        f"per-target=${args.max_budget_usd} global=${args.max_total_usd} rps≤{args.max_rps} capture={args.capture}")
     discord_send(content=f"🚀 autohunt ({args.mode}) — {len(queue)} program(s) queued.")
 
     rc = new_run_cost()
@@ -904,7 +872,7 @@ def main():
         record = {"slug": p["slug"], "started_at": now_iso(), "scope_hash": p["_scope_hash"],
                   "mode": args.mode, "model": args.model}
         try:
-            hr = hunt_pipeline(p, ws, env, args, mem) if args.mode == "pipeline" \
+            hr = hunt_planner(p, ws, env, args, mem) if args.mode == "planner" \
                 else hunt_single(p, ws, env, args, mem)
         finally:
             stop_capture(cap_proc)

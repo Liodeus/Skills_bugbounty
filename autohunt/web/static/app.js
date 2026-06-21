@@ -215,6 +215,7 @@ async function vCost() {
   const c = await api("/api/cost");
   let html = `<div class="cards"><div class="card"><div class="k">Total spent</div><div class="v">${cost(c.total)}</div></div></div>`;
   html += c.by_phase.length ? barRows(c.by_phase, "By phase ($)", (x) => x.cost, (v, it) => `${cost(v)} · ${it.n} calls`) : "";
+  html += (c.by_model && c.by_model.length) ? barRows(c.by_model, "By model ($)", (x) => x.cost, (v) => cost(v)) : "";
   html += c.by_program.length ? barRows(c.by_program, "By program ($)", (x) => x.cost, (v) => cost(v)) : "";
   html += c.by_day.length ? barRows(c.by_day, "Over time ($/day)", (x) => x.cost, (v) => cost(v)) : "";
   view.innerHTML = html || `<div class="empty">no cost data yet</div>`;

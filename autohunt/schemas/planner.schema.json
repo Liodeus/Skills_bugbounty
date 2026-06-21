@@ -1,0 +1,67 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["program_slug", "status", "summary", "findings", "leads_unverified"],
+  "properties": {
+    "program_slug": { "type": "string" },
+    "status": { "type": "string", "enum": ["completed", "no_findings", "error"] },
+    "summary": { "type": "string", "description": "What you inspected, what you dispatched, the outcome." },
+    "recon": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Surface map (from the recon subagent) to persist into memory.",
+      "properties": {
+        "live_hosts": { "type": "array", "items": { "type": "string" } },
+        "endpoints": { "type": "array", "items": { "type": "string" } },
+        "js_files": { "type": "array", "items": { "type": "string" } },
+        "params": { "type": "array", "items": { "type": "string" } },
+        "tech": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "description": "ONLY findings whose exploitation a hunter PROVED against an oracle.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "vuln_class", "severity", "asset", "endpoint", "verified", "oracle", "evidence", "dedupe_key"],
+        "properties": {
+          "title": { "type": "string" },
+          "vuln_class": { "type": "string", "enum": ["ssrf", "sqli", "rce", "cmdi", "ssti", "xxe", "idor", "rbac", "xss", "bxss", "ato", "secret", "business-logic", "other"] },
+          "severity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"] },
+          "asset": { "type": "string" },
+          "endpoint": { "type": "string" },
+          "verified": { "type": "boolean" },
+          "oracle": { "type": "string" },
+          "evidence": { "type": "string" },
+          "report_path": { "type": "string" },
+          "dedupe_key": { "type": "string" }
+        }
+      }
+    },
+    "leads_unverified": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "why_unproven"],
+        "properties": {
+          "title": { "type": "string" },
+          "vuln_class": { "type": "string" },
+          "asset": { "type": "string" },
+          "endpoint": { "type": "string" },
+          "why_unproven": { "type": "string" }
+        }
+      }
+    },
+    "tested_ruled_out": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["what", "why"],
+        "properties": { "what": { "type": "string" }, "why": { "type": "string" } }
+      }
+    }
+  }
+}

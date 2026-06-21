@@ -226,6 +226,7 @@ class DataStore:
 
     def cost(self):
         by_phase = defaultdict(lambda: {"cost": 0.0, "turns": 0, "in": 0, "out": 0, "n": 0})
+        by_model = defaultdict(lambda: {"cost": 0.0, "in": 0, "out": 0})
         by_program = defaultdict(float)
         by_day = defaultdict(float)
         for r in self._ledger():
@@ -237,8 +238,14 @@ class DataStore:
                 b = by_phase[ph.get("name", "?")]
                 b["cost"] += float(ph.get("cost") or 0); b["turns"] += ph.get("turns") or 0
                 b["in"] += ph.get("in") or 0; b["out"] += ph.get("out") or 0; b["n"] += 1
+                for mname, mu in (ph.get("models") or {}).items():
+                    bm = by_model[mname]
+                    bm["cost"] += float(mu.get("costUSD", mu.get("cost", 0)) or 0)
+                    bm["in"] += mu.get("inputTokens", mu.get("input_tokens", 0)) or 0
+                    bm["out"] += mu.get("outputTokens", mu.get("output_tokens", 0)) or 0
         return {
             "by_phase": [{"name": k, **v} for k, v in sorted(by_phase.items(), key=lambda x: -x[1]["cost"])],
+            "by_model": [{"name": k, **v} for k, v in sorted(by_model.items(), key=lambda x: -x[1]["cost"])],
             "by_program": [{"slug": k, "cost": round(v, 4)} for k, v in sorted(by_program.items(), key=lambda x: -x[1])],
             "by_day": [{"day": k, "cost": round(v, 4)} for k, v in sorted(by_day.items())],
             "total": round(sum(by_program.values()), 2),

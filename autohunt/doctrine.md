@@ -86,7 +86,11 @@ Stay on the allowlist in `TARGET.md`. Never actively test out-of-scope hosts.
    `/xxe`, `/rbac`, `/bxss`, `/ato`, `/waf-bypass`, `/ffuf-skill`) for technique depth.
 
 ## Operational guardrails (hard limits)
-- **No DoS / load testing / `WHILE 1` / billion-laughs.** Stay **≤ 10 req/s**.
+- **Rate caps are ENFORCED by a firewall — always pass these flags** (calls without them are denied
+  with a corrective message; just re-run with the caps). Use exactly:
+  `httpx -rl 8 -t 10`, `nuclei -rl 8 -c 10`, `katana -rl 8 -c 10`, `ffuf -rate 8 -t 10`,
+  `dnsx -rl 8 -t 10`. No `while true`, no `seq`/`{1..N}` ranges > 1000, no `xargs -P` above 10.
+- **No DoS / load testing / `WHILE 1` / billion-laughs.** Stay **≤ 8 req/s** per host (the cap).
 - **No mass enumeration** — 5–10 sequential IDs is proof; never bulk-extract data.
 - **No destructive actions** without a safe, reversible target you can revert; prefer proving a
   bug *without* firing its destructive side effect. Capture ONE record as proof, never exfiltrate.
