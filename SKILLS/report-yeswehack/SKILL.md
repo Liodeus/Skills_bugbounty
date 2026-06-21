@@ -43,7 +43,7 @@ Do not skip the file write step even if the report is short or "just a draft".
 A good YesWeHack report:
 1. **Triagers can reproduce in <5 minutes** with the steps you provide
 2. **Severity matches CVSS reality** — no inflated scores, no underclaiming
-3. **Impact is demonstrated, not asserted** — "This allows ATO" + screenshot beats "This could allow ATO"
+3. **Impact is demonstrated, not asserted** — "This allows ATO" + the exact request/response that proves it beats "This could allow ATO"
 4. **Scope is confirmed up-front** — link to the asset in the program scope
 5. **The ask is implicit:** triager reads, validates, accepts, pays. No "what does this allow?" follow-up.
 
@@ -156,13 +156,13 @@ YesWeHack uses CVSS 3.1 / 4.0 with program-specific overrides. General rules:
 * **Write the CVSS vector AND computed score into the body** — there's no UI calculator; the human submitter needs both spelled out so they can re-enter them.
 * **Name the affected asset** in the form-field block so the submitter tags the right one (un-tagged reports go to a generic queue).
 * **Dupe risk:** you can't browse hacktivity headlessly — if you have local signal that a finding may be known, note it; otherwise leave dupe-checking to submission time.
-* **No personal info in screenshots/PoC** — keep the report anonymizable.
+* **No personal info in the PoC/evidence** — keep the report anonymizable.
 * **Asset multipliers:** some programs pay more for specific assets — if you know the asset tier from program notes, mention it; don't go look it up online.
 
 ## Anti-patterns (will get you closed as N/A or informative)
 
 * "I think this might be a vulnerability because..." — submit only confirmed bugs
-* No reproduction steps, just a screenshot
+* No reproduction steps — just an assertion or a raw tool dump (give the exact request + response)
 * No impact section / impact is "could potentially"
 * Inflated CVSS (assigning C:H/I:H/A:H to a low-impact bug)
 * Out-of-scope assets (always check before submission)
