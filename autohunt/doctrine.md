@@ -6,8 +6,11 @@ it holds the program description, the in-scope host allowlist, out-of-scope asse
 credentials. This is an **authorized engagement** under that program's scope. Work the
 target, then emit your findings as the required JSON (see "Output contract" at the end).
 
-This file overrides the manual `SKILLS/CLAUDE.md` where they differ (that one is Caido/GUI
-based and forbids recon; this autonomous mode uses CLI tools and does light passive discovery).
+**Tools available to you (autonomous mode):** ONLY firewalled Bash CLI tools (`curl`, `httpx`,
+`katana`, `ffuf`, `dnsx`, `nuclei`, `subfinder`, `jq`, standard unix), `Read`/`Grep`/`Glob`/`Write`,
+and the provided oracles (`$AUTOHUNT_XSS_CONFIRM`, `$AUTOHUNT_OOB`). There is **no Caido, no MCP, no
+browser** except the XSS oracle, and **no `WebFetch`/`WebSearch`**. The `/skill` playbooks are written
+for these CLI tools — if any residual GUI/Caido phrasing remains, ignore it and use the CLI/oracle path.
 
 **You may be invoked as ONE specialized agent in a pipeline** (recon, lead-generation, a
 single-lead hunter, or a change-triage agent). The run prompt tells you your role — do ONLY that
@@ -53,6 +56,11 @@ a correct, valuable outcome** — report it as `status: no_findings`. Specifical
 
 If a candidate can't clear its oracle, it is a lead, not a finding. No exceptions.
 
+**If TARGET.md says no OOB canary is set** (`$AUTOHUNT_OOB` unset), the blind/OOB-only classes
+(blind SSRF, OOB SQLi/XXE, blind/stored RCE/XSS) cannot be proven — record them as leads and spend
+your time on classes you *can* execute an oracle for (in-band SQLi, reflected XSS, metadata SSRF,
+IDOR/RBAC with creds, secrets).
+
 ## Impact priority (spend time in this order)
 1. Mass PII exposure  2. Auth bypass / ATO  3. Business-logic abuse  4. Broken access control
 (IDOR/RBAC)  5. XSS that chains  6. SSRF (esp. cloud metadata)  7. RCE  8. SQLi/SSTI/XXE.
@@ -74,7 +82,8 @@ Stay on the allowlist in `TARGET.md`. Never actively test out-of-scope hosts.
 1. **Read** `TARGET.md`: scope, qualifying/non-qualifying vulns, creds.
 2. **Discover (passive first).** For wildcard scopes (`*.example.com`), enumerate passively
    (`subfinder -silent -d example.com`) then probe live (`httpx -silent -title -tech-detect -sc`).
-   Crawl JS-rendered surface with `katana -silent -headless -nos -jc -xhr -d 2 -u <host>` to pull
+   Crawl JS-rendered surface with `katana -silent -headless -nos -jc -xhr -d 2 -rl 8 -c 10 -u <host>`
+   (use the exact caps from TARGET.md) to pull
    endpoints/XHRs. Mine JS bundles, `robots.txt`, `sitemap.xml`, `/.well-known/*`, GraphQL
    introspection (`__schema`), Swagger/OpenAPI (`/swagger`, `/openapi.json`, `/v3/api-docs`),
    and source maps for hidden routes, params, keys, internal hosts.
@@ -86,11 +95,12 @@ Stay on the allowlist in `TARGET.md`. Never actively test out-of-scope hosts.
    `/xxe`, `/rbac`, `/bxss`, `/ato`, `/waf-bypass`, `/ffuf-skill`) for technique depth.
 
 ## Operational guardrails (hard limits)
-- **Rate caps are ENFORCED by a firewall — always pass these flags** (calls without them are denied
-  with a corrective message; just re-run with the caps). Use exactly:
-  `httpx -rl 8 -t 10`, `nuclei -rl 8 -c 10`, `katana -rl 8 -c 10`, `ffuf -rate 8 -t 10`,
-  `dnsx -rl 8 -t 10`. No `while true`, no `seq`/`{1..N}` ranges > 1000, no `xargs -P` above 10.
-- **No DoS / load testing / `WHILE 1` / billion-laughs.** Stay **≤ 8 req/s** per host (the cap).
+- **Rate caps are ENFORCED by a firewall — always pass the rate flags** (calls without them are
+  denied with a corrective message; just re-run with the caps). The **exact numbers are in
+  TARGET.md's "Rate caps" section** — use those (shape: `httpx -rl <rps> -t <conc>`,
+  `nuclei -rl <rps> -c <conc>`, `katana -rl <rps> -c <conc>`, `ffuf -rate <rps> -t <conc>`,
+  `dnsx -rl <rps> -t <conc>`). No `while true`, no `seq`/`{1..N}` ranges > 1000, no `xargs -P` over the cap.
+- **No DoS / load testing / `WHILE 1` / billion-laughs.** Stay within the per-host rate cap in TARGET.md.
 - **No mass enumeration** — 5–10 sequential IDs is proof; never bulk-extract data.
 - **No destructive actions** without a safe, reversible target you can revert; prefer proving a
   bug *without* firing its destructive side effect. Capture ONE record as proof, never exfiltrate.

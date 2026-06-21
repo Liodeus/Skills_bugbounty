@@ -28,7 +28,8 @@ wastes budget and trips WAF/IPS. You have two subagents available via the Agent 
    `tested_ruled_out[]`.
 
 ## Choose each subagent's model (cost/quality routing)
-**You decide the model per dispatch** — pass a `model` to the Agent tool when you spawn a subagent:
+**You decide the model per dispatch** (you, the planner, run on the configured model; this only sets
+each *subagent's* model) — pass a `model` to the Agent tool when you spawn a subagent:
 - `model: sonnet` — for routine/mechanical or low-confidence work: recon/mapping, shallow checks,
   long-tail leads. Cheaper and faster; use it by **default** to conserve usage.
 - `model: opus` — for high-impact, complex, or genuinely promising leads where deep reasoning pays

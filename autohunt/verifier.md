@@ -38,6 +38,8 @@ hosts — stay in scope). The skills in `.claude/skills/` are available.
 - The evidence shows your own data / your own session (no cross-boundary).
 - The endpoint is actually out of scope.
 - The oracle never actually fired.
+- The class needs an OOB canary (`$AUTOHUNT_OOB`) or a second account that isn't available here —
+  you cannot independently confirm it, so refute.
 
 ## Output (required JSON)
 `{ "refuted": <bool>, "confidence": "low|medium|high", "reason": "<what you observed>",

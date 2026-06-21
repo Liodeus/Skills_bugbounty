@@ -270,7 +270,7 @@ def merge_leads(mem, leads):
             continue
         item = {"id": uuid.uuid4().hex[:8], "title": l.get("title", ""),
                 "vuln_class": l.get("vuln_class", ""), "asset": l.get("asset", ""),
-                "endpoint": l.get("endpoint", ""), "why": l.get("why") or l.get("why_unproven", ""),
+                "endpoint": l.get("endpoint", ""), "why": l.get("why_unproven") or l.get("why", ""),
                 "priority": l.get("priority", "medium"), "status": "open",
                 "first_seen": now_iso(), "last_seen": now_iso(), "alerted": False}
         mem["leads"].append(item)
@@ -304,6 +304,28 @@ def record_finding_mem(mem, f):
                                 "first_seen": now_iso()})
 
 
+def _norm_ep(ep):
+    """Normalize an endpoint for stable dedupe: drop scheme/host/query, lowercase, collapse IDs."""
+    ep = str(ep or "").strip().lower()
+    ep = re.sub(r"^[a-z]+://[^/]+", "", ep)          # strip scheme+host if a full URL
+    ep = ep.split("?")[0].split("#")[0].rstrip("/")  # drop query/fragment/trailing slash
+    ep = re.sub(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "{uuid}", ep)
+    ep = re.sub(r"/\d+", "/{id}", ep)                # numeric path segments → {id}
+    return ep or "/"
+
+
+def make_dedupe_key(f):
+    """Stable 'vuln_class:asset:normalized-endpoint' key (matches the schema description)."""
+    return f"{str(f.get('vuln_class','')).lower()}:{str(f.get('asset','')).lower()}:{_norm_ep(f.get('endpoint',''))}"
+
+
+def is_proven(f):
+    """A finding counts as proven only with verified:true and non-trivial oracle + evidence."""
+    return (bool(f.get("verified"))
+            and len(str(f.get("oracle", "")).strip()) >= 8
+            and len(str(f.get("evidence", "")).strip()) >= 8)
+
+
 def memory_digest(mem):
     r = mem["recon"]
     open_leads = [l for l in mem["leads"] if l.get("status") == "open"]
@@ -332,18 +354,19 @@ def setup_workspace(p, allow, seeds, out_hosts, args):
     ws = HUNTS / p["slug"]
     (ws / "memory").mkdir(parents=True, exist_ok=True)  # preserved across runs
     shutil.copy(DOCTRINE, ws / "CLAUDE.md")
+    notes = ws / "memory" / "notes.md"
+    if not notes.exists():  # doctrine tells the agent to read/append this; seed it
+        notes.write_text("# Notes — free-form prose memory carried across runs\n")
 
+    # Copy the skill dirs INTO the workspace (not symlink) so they're readable under cwd without
+    # --add-dir, and so the conflicting manual SKILLS/CLAUDE.md never enters the agent's context.
     skills_dir = ws / ".claude" / "skills"
+    if skills_dir.exists():
+        shutil.rmtree(skills_dir)
     skills_dir.mkdir(parents=True, exist_ok=True)
     for child in SKILLS.iterdir():
         if child.is_dir():
-            link = skills_dir / child.name
-            try:
-                if link.is_symlink() or link.exists():
-                    link.unlink()
-                link.symlink_to(child)
-            except OSError:
-                pass
+            shutil.copytree(child, skills_dir / child.name, dirs_exist_ok=True)
 
     # Install native Claude Code subagents (recon, hunter) for planner mode.
     agents_dir = ws / ".claude" / "agents"
@@ -371,8 +394,18 @@ def setup_workspace(p, allow, seeds, out_hosts, args):
     parts.append("**Seed URLs:**\n" + "\n".join(f"- {u}" for u in seeds) + "\n")
     if out_hosts:
         parts.append("**Out-of-scope hosts (never test):**\n" + "\n".join(f"- `{h}`" for h in out_hosts) + "\n")
+    rps, conc = int(args.max_rps), int(args.max_conc)
+    parts.append(
+        f"## Rate caps (ENFORCED by firewall — use these EXACT flags)\n"
+        f"Max **{rps} req/s** per host. Scan tools are denied without their rate flag — pass:\n"
+        f"`httpx -rl {rps} -t {conc}`, `nuclei -rl {rps} -c {conc}`, `katana -rl {rps} -c {conc}`, "
+        f"`ffuf -rate {rps} -t {conc}`, `dnsx -rl {rps} -t {conc}`. (`subfinder` is passive — no flag.) "
+        f"No `while true`, no `seq`/`{{1..N}}` ranges > 1000, no `xargs -P` above {conc}.\n")
     if args.oob:
-        parts.append(f"**OOB canary host (use for SSRF/blind oracles):** `{args.oob}`\n")
+        parts.append(f"**OOB canary host (use for SSRF/blind/RCE oracles):** `{args.oob}`\n")
+    else:
+        parts.append("**No OOB canary** (`--oob` not set) — blind/OOB-only classes (blind SSRF, "
+                     "OOB SQLi/XXE, blind RCE/XSS) cannot be PROVEN; record them as leads.\n")
     if creds_path.exists():
         parts.append(f"**Credentials available** at `{creds_path}` — JSON with `login_url`, `notes`, "
                      f"and `accounts[]` (each: label/email/username/password/role). Read it, authenticate "
@@ -524,7 +557,8 @@ def _interruptible_sleep(secs):
 
 def run_claude(prompt, schema, ws, env, args, max_turns, max_budget, model=None):
     cmd = ["claude", "-p", prompt,
-           "--add-dir", str(SKILLS),
+           # Skills are copied into ws/.claude/skills (cwd-local), so no --add-dir is needed and the
+           # conflicting manual SKILLS/CLAUDE.md never enters context.
            # Remove the built-in network tools so the firewalled Bash (curl/httpx/…) is the ONLY
            # network path — WebFetch/WebSearch would otherwise reach arbitrary hosts unscoped.
            "--disallowedTools", "WebFetch", "WebSearch",
@@ -630,9 +664,13 @@ def hunt_single(p, ws, env, args, mem):
     if s is None:
         return {"ok": False, "verified": [], "leads": [], "tested": [], "phases": [ph],
                 "subtype": ph["subtype"]}
-    verified = [f for f in s.get("findings", []) if f.get("verified")]
-    leads = s.get("leads_unverified", [])
-    return {"ok": True, "verified": verified, "leads": leads, "tested": [], "phases": [ph]}
+    verified = []
+    for f in s.get("findings", []):
+        if is_proven(f):
+            f["dedupe_key"] = make_dedupe_key(f)
+            verified.append(f)
+    return {"ok": True, "verified": verified, "leads": s.get("leads_unverified", []),
+            "tested": s.get("tested_ruled_out", []), "phases": [ph]}
 
 
 def hunt_planner(p, ws, env, args, mem):
@@ -651,8 +689,8 @@ def hunt_planner(p, ws, env, args, mem):
     merge_recon(mem, s.get("recon", {}))
     verified = []
     for f in s.get("findings", []):
-        if f.get("verified") and f.get("oracle"):
-            f.setdefault("dedupe_key", f"{f.get('vuln_class')}:{f.get('asset')}:{f.get('endpoint')}")
+        if is_proven(f):
+            f["dedupe_key"] = make_dedupe_key(f)
             verified.append(f)
     return {"ok": True, "verified": verified,
             "leads": s.get("leads_unverified", []), "tested": s.get("tested_ruled_out", []),
@@ -1051,9 +1089,19 @@ def run_once(args):
                     target_cost += vph["cost"]
                     if verdict and verdict.get("refuted"):
                         log(f"  refuted: {f.get('title')} — {str(verdict.get('reason',''))[:120]}")
-                        record_tested(mem, [{"what": f.get("title"), "why": "refuted by verifier"}])
+                        record_tested(mem, [{"what": f.get("dedupe_key") or f.get("title"),
+                                             "why": "refuted by verifier"}])
                         continue
-                key = f.get("dedupe_key") or f"{f.get('vuln_class')}:{f.get('asset')}:{f.get('endpoint')}"
+                # require an actual report file for a verified finding — else downgrade to a lead
+                rp = f.get("report_path")
+                cand = (ws / rp) if (rp and not os.path.isabs(rp)) else (Path(rp) if rp else None)
+                if not (cand and cand.exists()):
+                    log(f"  no report written for {f.get('title')} — downgrading to lead")
+                    hr["leads"].append({"title": f.get("title", ""), "vuln_class": f.get("vuln_class", ""),
+                                        "asset": f.get("asset", ""), "endpoint": f.get("endpoint", ""),
+                                        "why_unproven": "verified but no report_path file was written"})
+                    continue
+                key = f.get("dedupe_key") or make_dedupe_key(f)
                 if key in index:
                     log(f"  duplicate: {f.get('title')}")
                     continue

@@ -23,9 +23,10 @@ Process:
    - **Not proven (fast):** `verified=false` with a precise `why_unproven`. A clean "not proven" is a
      correct result — don't sink budget into a dead end.
 
-Rate caps are ENFORCED — pass the rate flags on any scan tool. Stay in scope, ≤ 8 req/s, no DoS, no
-mass enumeration (≤5–10 IDs), no destructive actions without a safe revert. Never claim impact you
-didn't execute.
+Rate caps are ENFORCED — pass the rate flags from TARGET.md on any scan tool. Stay in scope, within
+the rate cap, no DoS, no mass enumeration (≤5–10 IDs), no destructive actions without a safe revert.
+Never claim impact you didn't execute. If your class needs an OOB canary or a second account that
+TARGET.md doesn't provide, you cannot prove it → `verified=false` with that `why_unproven`.
 
 **Return** (final message) a compact JSON verdict for THIS lead:
 `{"verified":bool,"title","vuln_class","severity","asset","endpoint","oracle","evidence","report_path","dedupe_key","why_unproven"}`

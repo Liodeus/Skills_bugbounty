@@ -52,8 +52,7 @@
           "asset": { "type": "string" },
           "endpoint": { "type": "string" },
           "priority": { "type": "string", "enum": ["high", "medium", "low"] },
-          "why": { "type": "string", "description": "The signal that makes this worth a manual look." },
-          "why_unproven": { "type": "string" }
+          "why_unproven": { "type": "string", "description": "What's missing to prove it (needs creds, needs browser, WAF blocked, not reproducible, etc.)." }
         }
       }
     },

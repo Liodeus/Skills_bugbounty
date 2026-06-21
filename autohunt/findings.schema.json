@@ -50,6 +50,16 @@
           "why_unproven": { "type": "string", "description": "What's missing to prove it (needs creds, needs browser, WAF blocked, not reproducible, etc.)." }
         }
       }
+    },
+    "tested_ruled_out": {
+      "type": "array",
+      "description": "Things tested and ruled out this run (persisted to memory so future runs skip them).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["what", "why"],
+        "properties": { "what": { "type": "string" }, "why": { "type": "string" } }
+      }
     }
   }
 }

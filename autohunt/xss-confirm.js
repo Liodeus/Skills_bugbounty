@@ -5,8 +5,10 @@
  * Loads a URL (which should already carry the XSS payload) in headless Chromium and
  * reports whether JavaScript actually EXECUTED — the proof needed before a finding is
  * reported. Strongest signal: an alert/confirm/prompt dialog firing with a unique nonce.
- * Also captures console output, page errors, and any [XSSHOOK] sink hits if the page's
- * payload set window.__xss (mirrors playwright-chrome/init/xss-instrument.js).
+ * Also injects playwright-chrome/init/xss-instrument.js (a DOM source→sink tracer) BEFORE page JS
+ * and seeds the nonce as a taint marker, so a nonce reaching an EXECUTING sink (eval/Function/
+ * setTimeout(string)/script/document.write) also counts as confirmed execution — not just dialogs.
+ * Reports console output, page errors, and the instrument's sink/taint hits (window.__xss).
  *
  * Usage:
  *   node xss-confirm.js "<url>" [--nonce <NONCE>] [--wait <ms>] [--shot <path>]
@@ -20,6 +22,9 @@
  * Exit 0 if xss confirmed, 1 if not confirmed, 2 on harness error (e.g. playwright missing).
  */
 'use strict';
+
+const path = require('path');
+const INSTRUMENT = path.join(__dirname, '..', 'playwright-chrome', 'init', 'xss-instrument.js');
 
 function parseArgs(argv) {
   const a = { url: null, nonce: null, wait: 3500, shot: null };
@@ -60,6 +65,11 @@ async function main() {
   try {
     browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
     const ctx = await browser.newContext({ ignoreHTTPSErrors: true });
+    // Seed the nonce as a taint marker, then install the DOM source→sink instrument BEFORE page JS.
+    try {
+      if (args.nonce) await ctx.addInitScript({ content: `window.__xssMarkers=[${JSON.stringify(args.nonce)}];` });
+      await ctx.addInitScript({ path: INSTRUMENT });
+    } catch (_) { /* instrument is optional — the dialog oracle still works without it */ }
     const page = await ctx.newPage();
 
     page.on('dialog', async (d) => {
@@ -80,12 +90,31 @@ async function main() {
     }
     await page.waitForTimeout(args.wait);
 
-    // Pull sink-hook results if the page populated them (xss-instrument.js).
+    // Pull the instrument's source→sink results (window.__xss).
     try {
-      const hooked = await page.evaluate(() => (window.__xss && window.__xss.events) ? window.__xss.events.slice(0, 50) : []);
-      if (Array.isArray(hooked) && hooked.length) {
+      const hooked = await page.evaluate(() => {
+        const x = window.__xss;
+        if (!x) return null;
+        return {
+          sinks: (x.sinks || []).slice(0, 50), taint: (x.taint || []).slice(0, 50),
+          listeners: (x.listeners || []).slice(0, 20), csp: (x.csp || []).slice(0, 20),
+        };
+      });
+      if (hooked) {
         out.xsshook = hooked;
-        if (!out.xss) { out.oracle = out.oracle || `sink hit: ${hooked.length} dangerous sink write(s) recorded`; }
+        // A seeded nonce reaching an EXECUTING sink is proof of execution (no dialog needed).
+        const execHit = (hooked.taint || []).find(
+          (t) => /^(eval|Function|setTimeout|setInterval|script\.(text|src)|document\.write)/.test(t.sink || ''));
+        if (!out.xss && execHit) {
+          out.xss = true;
+          out.nonce_matched = true;
+          out.oracle = `nonce reached executing sink ${execHit.sink} (DOM source→sink execution)`;
+        } else if (!out.xss && (hooked.taint || []).length) {
+          out.oracle = out.oracle ||
+            `source→sink flow: nonce reached ${hooked.taint.length} markup sink(s) — craft an executing payload to confirm`;
+        } else if (!out.xss && (hooked.sinks || []).length) {
+          out.oracle = out.oracle || `${hooked.sinks.length} dangerous sink write(s) observed (no nonce taint match)`;
+        }
       }
     } catch (_) {}
 

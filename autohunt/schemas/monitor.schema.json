@@ -6,6 +6,6 @@
     "worth_investigating": { "type": "boolean", "description": "Does this change plausibly affect the threat model / warrant a closer look?" },
     "reason": { "type": "string" },
     "suggested_action": { "type": "string", "description": "Concrete next step for the human (what to look at)." },
-    "severity_guess": { "type": "string", "enum": ["none", "low", "medium", "high", "critical"] }
+    "severity_guess": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"] }
   }
 }

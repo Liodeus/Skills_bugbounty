@@ -1,27 +1,34 @@
 ---
 name: waf-bypass
-description: "Use when payloads trigger 403/406/451 responses, custom WAF block pages, or signature-based filtering masking an underlying vulnerability (SQLi, XSS, SSRF, RCE, SSTI). Note: WAF bypass alone is NOT reportable — always combine with the underlying vuln."
+description: "Use when payloads trigger 403/406/451 responses, custom WAF block pages, or signature-based filtering masking an underlying vulnerability (SQLi, XSS, SSRF, RCE, SSTI). WAF bypass alone is NOT reportable — always chain INTO the underlying vuln."
 ---
 
 # /waf-bypass - WAF Detection & Evasion
 
-You are assisting **Liodeus (YesWeHack)**. WAF bypass is a **technique**, not a finding. The bounty is in the underlying vulnerability — the bypass is the proof that the WAF wasn't a real control.
+You are an autonomous hunter. WAF bypass is a **technique chained INTO another vuln, never reported alone**. The bounty is in the underlying vulnerability — the bypass is only the proof that the WAF wasn't a real control.
 
 ## Core Philosophy
 
 * **No underlying vuln = no report.** If you bypass the WAF but nothing fires server-side, log `[DEAD-END]` and move on.
 * **WAF bypass alone is informative.** Programs close standalone "I bypassed Cloudflare" reports. Always chain to a confirmed vuln.
 * **Try infrastructure bypass before payload obfuscation.** A reachable origin makes the WAF irrelevant. Don't burn 50 encoding variants when a `staging.target.com` lookup solves it.
-* **Iterate in Caido, not curl.** Every variant lands in the project history — replayable, comparable, audit-trailed.
+* **Iterate methodically with the CLI.** Keep your variants and their status codes in a scratch file so you can compare what passed vs. what got blocked.
 
 ## Always-ignore on its own
 * "I bypassed the WAF" reports without a confirmed underlying vuln behind it.
 * Generic encoding tricks against a strict WAF without observable backend execution.
 * Techniques the program publicly documents in their own hardening blog (informative).
 
-## Tooling
+## Environment (autonomous headless harness)
 
-Use the **Caido MCP** for iterative payload testing — every variant lands in the project history, side-by-side replayable. Don't curl variants out-of-band; you'll lose the audit trail. If a payload needs JS-rendered context (DOM XSS through a CDN WAF), drive **Playwright** so the browser routes through Caido.
+You have **only a firewalled Bash CLI** plus Read/Grep/Glob/Write:
+* `curl` / `httpx` — the workhorses for sending each evasion variant and reading the status/body. `curl` gives you full control over raw bytes, headers, method, encoding, chunking, and charset — everything WAF evasion needs.
+* `ffuf` — when you want to spray a *list* of encodings/variants fast; **always carry the firewall-enforced rate caps from TARGET.md** (e.g. `ffuf -rate 8 -t 10` shape). A WAF target especially: low rate, low threads, no recursion.
+* `dnsx` / `subfinder` — for Phase 0 origin/staging-host discovery.
+* `$AUTOHUNT_OOB` — OOB canary for blind backend execution (e.g. SSRF behind the WAF). If UNSET, blind confirmation isn't available → that path stays a LEAD.
+* No browser, no proxy GUI — iterate variants with `curl`/`httpx` and keep a record yourself. Confirm XSS execution with the xss-confirm.js oracle (`node "$AUTOHUNT_XSS_CONFIRM" "<url>" --nonce <NONCE>`); confirm other vulns with their normal server-side signal.
+
+Keep a scratch log of every variant + its response code so the comparison is replayable; you do not submit anything — the orchestrator handles delivery.
 
 ## Quick Reference
 
@@ -82,9 +89,9 @@ If origin is reachable → test underlying vuln there. Document the infra bypass
 
 ### Phase 1 — Detect the WAF
 
-Send a noisy payload through Caido:
-```
-?id=' OR 1=1--
+Send a noisy payload with `curl`/`httpx`:
+```bash
+curl -ski "https://target.com/?id=' OR 1=1--"
 ```
 Observe the response:
 * **403 / 406 / 451** + custom block page → WAF blocking
@@ -97,7 +104,20 @@ Check headers, cookies, error body. Match against the detection table above. **S
 
 ### Phase 3 — Apply bypass techniques
 
-Apply in roughly this order. Iterate in the Caido replay tab so every variant is preserved and comparable.
+Apply in roughly this order. Iterate with `curl`/`httpx` (one variant per request, or a small `ffuf` list with TARGET.md rate caps), logging each variant + status code to a scratch file so they're preserved and comparable.
+
+**CLI iteration patterns:**
+```bash
+# One variant at a time — read just the status line + headers to see block vs pass
+curl -sk -o /dev/null -w '%{http_code}\n' "https://target.com/?id=%2527%2520OR%25201%253D1--"
+
+# Spray a wordlist of encodings/variants with the ENFORCED caps from TARGET.md
+#   (shape only — use the exact -rate / -t numbers TARGET.md specifies)
+ffuf -w variants.txt -u "https://target.com/?id=FUZZ" -rate 8 -t 10 -mc all -ac
+
+# A POST variant with a non-standard Content-Type / charset trick
+curl -sk -X POST "https://target.com/search" -H 'Content-Type: text/plain' --data-raw "q=' OR 1=1--"
+```
 
 #### 3.1 URL Encoding
 ```
@@ -248,7 +268,7 @@ Body: [IBM037-encoded payload]
 
 ### Phase 5 — Document the bypass in the report
 
-WAF bypass without an underlying vuln is not a finding. The report combines both:
+WAF bypass without an underlying vuln is not a finding. **This is a technique chained INTO another vuln, never reported alone.** The report combines both:
 
 ```
 Underlying vulnerability:  SQL Injection in /search?q=
@@ -257,4 +277,7 @@ Bypass method:             Double URL encoding (%2527 instead of ')
 Combined severity:         WAF was the only control — bypass = full exploitability
 ```
 
-Hand off to `/report-yeswehack` with both pieces — vuln + bypass technique — in the same submission.
+Confirm the underlying vuln actually executed past the WAF before writing it up — server-side
+signal for SQLi/SSTI/etc., the xss-confirm.js oracle for XSS, an `$AUTOHUNT_OOB` callback for
+blind/SSRF. Then hand both pieces — confirmed vuln + the exact bypassing variant (the request
+bytes that passed) — to `/report-yeswehack` in the same write-up.
