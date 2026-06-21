@@ -540,6 +540,8 @@ def run_claude(prompt, schema, ws, env, args, max_turns, max_budget, model=None)
     m = model or args.model
     if m:
         cmd += ["--model", m]
+    if getattr(args, "effort", None):
+        cmd += ["--effort", args.effort]
 
     waits = 0
     while True:
@@ -895,8 +897,9 @@ def parse_args():
                          "single = one monolithic agent.")
     ap.add_argument("--no-verify", action="store_true", help="Skip the independent refuter.")
     ap.add_argument("--capture", choices=["none", "mitmdump", "caido"], default="none")
-    ap.add_argument("--model", default="sonnet", help="Planner/hunter model (default sonnet; use opus for hard targets).")
-    ap.add_argument("--verify-model", default="sonnet", help="Refuter/triage model (default sonnet; opus for a stronger skeptic).")
+    ap.add_argument("--model", default="opus", help="Planner/hunter model (default opus = 4.8; sonnet for cheaper/broader sweeps).")
+    ap.add_argument("--verify-model", default="opus", help="Refuter/triage model (default opus).")
+    ap.add_argument("--effort", default="high", help="Reasoning effort for every session (low|medium|high|xhigh|max; default high).")
     ap.add_argument("--permission-mode", default="bypassPermissions")
     ap.add_argument("--use-api", action="store_true",
                     help="Bill the Anthropic API (keep ANTHROPIC_API_KEY). Default: use your Claude subscription.")
@@ -993,7 +996,7 @@ def run_once(args):
         return
 
     log(f"Run: {len(queue)} program(s). mode={args.mode} auth={'api' if args.use_api else 'subscription'} "
-        f"model={args.model} verify={args.verify_model} per-target=${args.max_budget_usd} "
+        f"model={args.model} effort={args.effort} verify={args.verify_model} per-target=${args.max_budget_usd} "
         f"global=${args.max_total_usd} rps≤{args.max_rps} capture={args.capture}")
     discord_send(content=f"🚀 autohunt ({args.mode}) — {len(queue)} program(s) queued.")
 

@@ -119,8 +119,9 @@ firewall, and a **circuit-breaker** that halts on repeated auth/network failures
 limit, autohunt **pauses until the window resets and retries the same target** (it reads the reset
 time if present, else waits `--usage-backoff` seconds, up to `--max-usage-waits` cycles) — and pings
 Discord that it's paused. So an overnight run rides through your 5-hour windows instead of failing.
-On a Max plan, stay on the default `sonnet` model and use `--only-changed`/`--limit` to make each
-window go further.
+The default is **`opus` (4.8) at `--effort high`** for maximum hunting quality; on a Max plan use
+`--only-changed`/`--limit` to make each usage window go further, or drop to `--model sonnet` for
+broader/cheaper sweeps.
 
 ## How the auto-loop works (intelligent dispatch)
 
@@ -146,7 +147,8 @@ Per program, one **planner** `claude -p` session:
 | `--program <slug>` / `--limit N` / `--only-changed` / `--bbp-only` | Pick & scope the queue. |
 | `--max-budget-usd` / `--max-total-usd` / `--max-turns` / `--timeout` | Budget & time caps. |
 | `--max-rps` (8) / `--max-conc` (10) | **Enforced** scan-tool rate/concurrency caps (anti-IPS). |
-| `--model` / `--verify-model` | Planner/hunter vs refuter model — **default `sonnet`** (cheaper); pass `opus` for hard targets. |
+| `--model` / `--verify-model` | Planner/hunter vs refuter model — **default `opus`** (4.8). `sonnet` for cheaper/broader sweeps. |
+| `--effort` | Reasoning effort for every session — **default `high`** (`low`/`medium`/`high`/`xhigh`/`max`). |
 | `--capture mitmdump` | Record traffic through a proxy for later human replay. |
 | `--rate-proxy` | Route tool traffic through a mitmdump that hard-caps per-host req/s (true global ceiling). |
 | `--oob <host>` | OOB canary host for SSRF/blind oracles (also added to the safe-host allowlist). |
