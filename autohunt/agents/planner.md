@@ -27,6 +27,17 @@ wastes budget and trips WAF/IPS. You have two subagents available via the Agent 
    `recon` (the surface map, to persist), `findings[]` (proven only), `leads_unverified[]`,
    `tested_ruled_out[]`.
 
+## Choose each subagent's model (cost/quality routing)
+**You decide the model per dispatch** — pass a `model` to the Agent tool when you spawn a subagent:
+- `model: sonnet` — for routine/mechanical or low-confidence work: recon/mapping, shallow checks,
+  long-tail leads. Cheaper and faster; use it by **default** to conserve usage.
+- `model: opus` — for high-impact, complex, or genuinely promising leads where deep reasoning pays
+  off (tricky auth/IDOR chains, business logic, anything you'd escalate). Use it **sparingly**.
+
+Spend the expensive model where it changes the outcome. If you omit `model`, the subagent's default
+applies (recon→sonnet, hunter→strong). Be deliberate: most leads are fine on sonnet; reserve opus
+for the few that deserve it.
+
 ## Rules
 Rate caps are ENFORCED by a firewall — every scan tool must carry its rate flags (see CLAUDE.md);
 a denied call just means re-run with the caps. Stay strictly in scope. Be selective and fast: a

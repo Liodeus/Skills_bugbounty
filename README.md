@@ -132,7 +132,9 @@ Per program, one **planner** `claude -p` session:
 2. **Inspects** the surface (light probing / the `recon` subagent for wildcard expansion + JS/endpoint
    mining). On a thin surface it correctly **stops** (`no_findings`) rather than manufacturing work.
 3. **Decides and dispatches** `hunter` subagents *only* for the few highest-impact, provable leads —
-   in small batches to stay quiet. Each hunter proves exactly one lead against its oracle.
+   in small batches to stay quiet. Each hunter proves exactly one lead against its oracle. The
+   planner also **routes the model per dispatch** — cheap `sonnet` for routine/low-confidence work,
+   `opus` for the few promising/complex leads — so spend follows value (recon defaults to sonnet).
 4. **Verifies** each candidate with an **independent refuter** (a separate strong-model session) and
    **dedupes** across runs before anything is reported.
 5. **Records** everything: report `.md` per verified finding, Discord push (findings + a tagged
@@ -147,7 +149,7 @@ Per program, one **planner** `claude -p` session:
 | `--program <slug>` / `--limit N` / `--only-changed` / `--bbp-only` | Pick & scope the queue. |
 | `--max-budget-usd` / `--max-total-usd` / `--max-turns` / `--timeout` | Budget & time caps. |
 | `--max-rps` (8) / `--max-conc` (10) | **Enforced** scan-tool rate/concurrency caps (anti-IPS). |
-| `--model` / `--verify-model` | Planner/hunter vs refuter model — **default `opus`** (4.8). `sonnet` for cheaper/broader sweeps. |
+| `--model` / `--verify-model` | Planner & refuter model — **default `opus`** (4.8). The planner picks each subagent's model itself (sonnet/opus). `sonnet` for cheaper/broader sweeps. |
 | `--effort` | Reasoning effort for every session — **default `high`** (`low`/`medium`/`high`/`xhigh`/`max`). |
 | `--capture mitmdump` | Record traffic through a proxy for later human replay. |
 | `--rate-proxy` | Route tool traffic through a mitmdump that hard-caps per-host req/s (true global ceiling). |
