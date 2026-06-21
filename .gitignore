@@ -16,3 +16,6 @@ data/
 # Node deps for the Playwright XSS-confirm oracle (installed by install_tools.sh)
 node_modules/
 package-lock.json
+
+# Python venv for the web dashboard
+autohunt/web/.venv/

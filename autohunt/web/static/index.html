@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>autohunt dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">⚡ autohunt</div>
+    <nav id="nav">
+      <a href="#/overview" data-view="overview">Overview</a>
+      <a href="#/programs" data-view="programs">Programs</a>
+      <a href="#/findings" data-view="findings">Findings</a>
+      <a href="#/leads" data-view="leads">Leads</a>
+      <a href="#/cost" data-view="cost">Cost</a>
+      <a href="#/changes" data-view="changes">Changes &amp; Alerts</a>
+      <a href="#/log" data-view="log">Live log</a>
+    </nav>
+    <div class="conn"><span id="dot" class="dot"></span><span id="connlabel">connecting…</span></div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div id="crumb">Overview</div>
+      <div class="spacer"></div>
+      <button id="refresh" title="Refresh">↻</button>
+      <span id="updated" class="muted"></span>
+    </header>
+    <section id="view" class="view"><div class="loading">loading…</div></section>
+  </main>
+
+  <div id="toasts" class="toasts"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
