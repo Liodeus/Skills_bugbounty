@@ -28,15 +28,23 @@ REPO = HERE.parents[1]
 app = FastAPI(title="autohunt dashboard")
 STORE: DataStore = None  # set in main()
 READ_ONLY = False        # set in main() via --read-only
+BIND_HOST = "127.0.0.1"  # set in main(); enables the rebinding guard when loopback
+_LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
 
 def store() -> DataStore:
     return STORE
 
 
-def _require_write():
+def _require_write(request: Request):
     if READ_ONLY:
         return JSONResponse({"error": "read-only mode"}, status_code=403)
+    # DNS-rebinding / cross-origin guard: on the default localhost bind, only accept loopback Host
+    # headers (a page on evil.com can't drive your local dashboard's write endpoints).
+    if BIND_HOST in _LOOPBACK:
+        host = (request.headers.get("host", "") or "127.0.0.1").rsplit(":", 1)[0].strip("[]")
+        if host not in _LOOPBACK:
+            return JSONResponse({"error": "forbidden host"}, status_code=403)
     return None
 
 
@@ -117,7 +125,7 @@ def api_report(slug: str, filename: str):
 # --------------------------------------------------------------------------- #
 @app.post("/api/stop")
 async def api_stop(request: Request):
-    ro = _require_write()
+    ro = _require_write(request)
     if ro:
         return ro
     try:
@@ -128,8 +136,8 @@ async def api_stop(request: Request):
 
 
 @app.post("/api/rehunt/{slug}")
-def api_rehunt(slug: str):
-    ro = _require_write()
+def api_rehunt(slug: str, request: Request):
+    ro = _require_write(request)
     if ro:
         return ro
     return JSONResponse({"ok": store().mark_rehunt(slug)})
@@ -137,7 +145,7 @@ def api_rehunt(slug: str):
 
 @app.post("/api/leads/{slug}/{lead_id}")
 async def api_lead_status(slug: str, lead_id: str, request: Request):
-    ro = _require_write()
+    ro = _require_write(request)
     if ro:
         return ro
     try:
@@ -211,7 +219,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 # --------------------------------------------------------------------------- #
 def main():
-    global STORE, READ_ONLY
+    global STORE, READ_ONLY, BIND_HOST
     ap = argparse.ArgumentParser(description="autohunt web dashboard.")
     ap.add_argument("--data-dir", default=str(REPO / "data"), help="autohunt data/ dir to plug into.")
     ap.add_argument("--host", default="127.0.0.1", help="bind host (default localhost).")
@@ -220,6 +228,7 @@ def main():
     args = ap.parse_args()
 
     READ_ONLY = args.read_only
+    BIND_HOST = args.host
     STORE = DataStore(args.data_dir)
     if not STORE.root.exists():
         print(f"WARNING: data dir {STORE.root} does not exist yet — dashboard will be empty.", file=sys.stderr)

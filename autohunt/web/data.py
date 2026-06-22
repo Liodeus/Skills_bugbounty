@@ -45,24 +45,24 @@ def _iter_jsonl(path: Path):
         return
 
 
-import re as _re
+# Program descriptions / agent reports are rendered as HTML in the dashboard, so a malicious program
+# `rules` blob (or report) must not be able to run JS. Use a real HTML-allowlist sanitiser (nh3 =
+# the Rust `ammonia` parser) — a regex stripper is bypassable (unquoted javascript: hrefs, style=…, etc).
+try:
+    import nh3
 
-# Defense-in-depth sanitisation: program descriptions / agent reports are rendered as HTML in the
-# dashboard; strip active content so a malicious program `rules` blob can't run JS in your browser.
-_STRIP_TAGS = _re.compile(r"<\s*(script|style|iframe|object|embed|form|link|meta)\b[^>]*>.*?<\s*/\s*\1\s*>",
-                          _re.I | _re.S)
-_STRIP_SELFCLOSE = _re.compile(r"<\s*(script|style|iframe|object|embed|link|meta)\b[^>]*/?>", _re.I)
-_ON_ATTR = _re.compile(r"[\s/]on\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s/>]+)", _re.I)
-_JS_URL = _re.compile(r"((?:href|src))\s*=\s*(\"|')\s*(?:javascript|data|vbscript):[^\"']*\2", _re.I)
+    def _sanitize(html: str) -> str:
+        return nh3.clean(html, url_schemes={"http", "https", "mailto"})
+except Exception:   # nh3 unavailable → safest fallback is escaped text (no raw HTML), never raw passthrough
+    import html as _htmllib
+
+    def _sanitize(html: str) -> str:
+        return "<pre>" + _htmllib.escape(html) + "</pre>"
 
 
 def _md(text: str) -> str:
-    html = md.markdown(text or "", extensions=["tables", "fenced_code", "sane_lists"])
-    html = _STRIP_TAGS.sub("", html)
-    html = _STRIP_SELFCLOSE.sub("", html)
-    html = _ON_ATTR.sub("", html)
-    html = _JS_URL.sub(r'\1=\2#\2', html)
-    return html
+    """Render markdown → SANITIZED HTML (shown in the dashboard via innerHTML)."""
+    return _sanitize(md.markdown(text or "", extensions=["tables", "fenced_code", "sane_lists"]))
 
 
 def vuln_class_from_key(key: str) -> str:
@@ -74,15 +74,9 @@ def _bad_slug(slug: str) -> bool:
     return (not slug) or "/" in slug or "\\" in slug or slug in (".", "..") or ".." in slug.split("/")
 
 
-def _dir_sig(path: Path) -> float:
-    """A cheap change-signature for a dir tree: max mtime over it (for cache invalidation)."""
+def _safe_mtime(path: Path) -> float:
     try:
-        m = path.stat().st_mtime
-        for p in path.rglob("*"):
-            mt = p.stat().st_mtime
-            if mt > m:
-                m = mt
-        return m
+        return path.stat().st_mtime
     except OSError:
         return 0.0
 
@@ -129,19 +123,20 @@ class DataStore:
         return _load_json(self.hunts / slug / "memory" / "knowledge.json", {})
 
     def _all_knowledge(self):
-        def compute():
-            out = {}
-            if self.hunts.exists():
-                for d in self.hunts.iterdir():
-                    kp = d / "memory" / "knowledge.json"
-                    if kp.exists():
-                        out[d.name] = _load_json(kp, {})
-            return out
-        return self._cached("knowledge", _dir_sig(self.hunts), compute)
+        # cheap cache key: stat only the knowledge.json files we actually read (not the whole tree)
+        files = sorted(self.hunts.glob("*/memory/knowledge.json")) if self.hunts.exists() else []
+        sig = tuple((kp.parent.parent.name, _safe_mtime(kp)) for kp in files)
+        return self._cached(
+            "knowledge", sig,
+            lambda: {kp.parent.parent.name: _load_json(kp, {}) for kp in files})
 
     def _ledger(self):
         lp = self.hunts / "ledger.jsonl"
-        sig = (lp.stat().st_mtime, lp.stat().st_size) if lp.exists() else 0
+        try:
+            s = lp.stat()
+            sig = (s.st_mtime, s.st_size)
+        except OSError:
+            sig = 0
         return self._cached("ledger", sig, lambda: list(_iter_jsonl(lp)))
 
     def _alerts(self):
@@ -189,6 +184,7 @@ class DataStore:
                          if (s.get("scope_type") if isinstance(s, dict) else "") in ("web-application", "api", "")])
             st = status.get(slug, {})
             k = kn.get(slug, {})
+            vr = st.get("verified_reported")   # 0 is a real value — don't fall through to len(findings)
             rows.append({
                 "slug": slug,
                 "title": c.get("title") or slug,
@@ -197,7 +193,7 @@ class DataStore:
                 "bounty_max": raw.get("bounty_reward_max") or 0,
                 "hosts": hosts,
                 "status": st.get("status") or "—",
-                "findings": st.get("verified_reported") or len(k.get("findings", [])) or 0,
+                "findings": vr if vr is not None else len(k.get("findings", [])),
                 "open_leads": sum(1 for l in k.get("leads", []) if l.get("status") == "open"),
                 "cost": float(st.get("total_cost_usd") or 0),
                 "last_run": st.get("last_run") or "",
@@ -324,7 +320,7 @@ class DataStore:
     @staticmethod
     def _save(path: Path, obj):
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")  # unique tmp → no concurrent clobber
         tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False))
         os.replace(tmp, path)
 

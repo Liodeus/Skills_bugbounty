@@ -49,6 +49,15 @@ function openModal(title, html) {
   document.body.appendChild(bd);
   bd.addEventListener("click", (e) => { if (e.target === bd || e.target.id === "mclose") closeModal(); });
   document.addEventListener("keydown", escClose);
+  // focus trap: keep Tab within the dialog
+  bd.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab") return;
+    const f = [...bd.querySelectorAll('a[href],button,[tabindex]:not([tabindex="-1"])')].filter((x) => x.offsetParent !== null);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
   const c = $("#mclose", bd); if (c) c.focus();
 }
 async function showReport(slug, filename) {
@@ -142,7 +151,7 @@ async function vProgram(slug) {
   const tabs = ["Overview", "Scope", "Recon", "Leads", "Findings", "Runs", "Monitor"];
   const cur = ST.tab[slug] && tabs.includes(ST.tab[slug]) ? ST.tab[slug] : "Overview";
   const rehuntBtn = CONFIG.read_only ? "" :
-    `<button class="tbtn" style="margin-bottom:10px" onclick="rehunt('${esc(slug)}');return false">↻ Queue re-hunt</button>`;
+    `<button class="tbtn" style="margin-bottom:10px" data-rehunt="${esc(slug)}">↻ Queue re-hunt</button>`;
   view.innerHTML = rehuntBtn + `<div class="tabs" role="tablist">${tabs.map((t) => `<button data-t="${t}" class="${t === cur ? "active" : ""}" role="tab" aria-selected="${t === cur}">${t}</button>`).join("")}</div><div id="tabc"></div>`;
   const c = $("#tabc");
   const draw = (t) => {
@@ -182,7 +191,7 @@ function runsView(runs) {
 function monitorView(base) {
   const urls = Object.keys(base || {});
   if (!urls.length) return `<div class="empty">no monitor baseline yet — run <code>autohunt.py --monitor</code></div>`;
-  const body = urls.map((u) => `<tr><td class="mono">${esc(u)}</td><td class="num">${esc(base[u].status)}</td><td class="mono">${esc(base[u].hash)}</td><td>${shortTime(base[u].checked_at)}</td></tr>`).join("");
+  const body = urls.map((u) => { const b = base[u] || {}; return `<tr><td class="mono">${esc(u)}</td><td class="num">${esc(b.status)}</td><td class="mono">${esc(b.hash)}</td><td>${shortTime(b.checked_at)}</td></tr>`; }).join("");
   return `<div class="panel scroll"><h3>Monitor baseline (${urls.length})</h3><div class="tablewrap"><table><thead><tr><th>URL</th><th class="num">Status</th><th>Body hash</th><th>Checked</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
 }
 function findingsView(items) {
@@ -195,14 +204,15 @@ function listView(items, cols, emptyMsg) {
   const body = items.map((r) => "<tr>" + cols.map((c) => `<td>${c.html ? c.html(r) : esc(r[c.key] ?? "")}</td>`).join("") + "</tr>").join("");
   return `<div class="panel scroll"><div class="tablewrap"><table><thead><tr>${cols.map((c) => `<th>${esc(c.label)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div></div>`;
 }
-function leadCols(withProgram) {
+function leadCols(withProgram, slug) {
   const cols = [
     { key: "priority", label: "Prio", html: (r) => `<span class="chip prio-${esc((r.priority || "medium").toLowerCase())}">${esc(r.priority || "—")}</span>` },
-    { key: "status", label: "Status", html: (r) => `<span class="chip">${esc(r.status || "")}</span>` },
+    { key: "status", label: "Status", html: (r) => `<span class="chip">${esc(r.status || "open")}</span>` },
     { key: "vuln_class", label: "Class" },
     { key: "title", label: "Title" },
     { key: "asset", label: "Asset", html: (r) => `<span class="mono">${esc(r.asset || "")}</span>` },
     { key: "endpoint", label: "Endpoint", html: (r) => `<span class="mono">${esc(r.endpoint || "")}</span>` },
+    { key: "why", label: "Why", html: (r) => esc(r.why || r.why_unproven || "") },
   ];
   if (withProgram) cols.push({ key: "slug", label: "Program", html: (r) => `<a href="#/program/${encodeURIComponent(r.slug)}">${esc(r.slug)}</a>` });
   if (!CONFIG.read_only) cols.push({
@@ -211,7 +221,7 @@ function leadCols(withProgram) {
       if (!s || !id) return "—";
       const next = r.status === "dismissed" ? "open" : "dismissed";
       const lbl = r.status === "dismissed" ? "reopen" : "dismiss";
-      return `<button class="tbtn" onclick="leadAction('${esc(s)}','${esc(id)}','${next}');return false">${lbl}</button>`;
+      return `<button class="tbtn" data-lead-action data-slug="${esc(s)}" data-id="${esc(id)}" data-next="${esc(next)}">${lbl}</button>`;
     }
   });
   return cols;
@@ -261,12 +271,13 @@ function barRows(items, label, valfn, fmt) {
 }
 async function vCost() {
   const c = await api("/api/cost");
+  const bp = c.by_phase || [], bm = c.by_model || [], bpr = c.by_program || [], bd = c.by_day || [];
   let html = `<div class="cards"><div class="card"><div class="k">Total (estimate)</div><div class="v">${cost(c.total)}</div></div></div>`;
-  if (c.by_phase.length) html += barRows(c.by_phase, "By phase", (x) => x.cost, (v, it) => `${cost(v)} · ${it.n}×`);
-  if (c.by_model && c.by_model.length) html += barRows(c.by_model, "By model", (x) => x.cost, (v) => cost(v));
-  if (c.by_program.length) html += barRows(c.by_program, "By program", (x) => x.cost, (v) => cost(v));
-  if (c.by_day.length) html += barRows(c.by_day, "Over time ($/day)", (x) => x.cost, (v) => cost(v));
-  view.innerHTML = (c.by_phase.length || c.by_program.length) ? html : `<div class="empty">no cost data yet — run a hunt</div>`;
+  if (bp.length) html += barRows(bp, "By phase", (x) => x.cost, (v, it) => `${cost(v)} · ${it.n}×`);
+  if (bm.length) html += barRows(bm, "By model", (x) => x.cost, (v) => cost(v));
+  if (bpr.length) html += barRows(bpr, "By program", (x) => x.cost, (v) => cost(v));
+  if (bd.length) html += barRows(bd, "Over time ($/day)", (x) => x.cost, (v) => cost(v));
+  view.innerHTML = (bp.length || bpr.length) ? html : `<div class="empty">no cost data yet — run a hunt</div>`;
 }
 
 async function vChanges() {
@@ -314,6 +325,13 @@ window.rehunt = async (slug) => {
   try { await post(`/api/rehunt/${encodeURIComponent(slug)}`, {}); toast(`${slug} queued for re-hunt`); }
   catch { toast("re-hunt failed", true); }
 };
+// delegated triage clicks — survive table redraws and avoid inline JS-string interpolation
+view.addEventListener("click", (e) => {
+  const la = e.target.closest("[data-lead-action]");
+  if (la) { e.preventDefault(); leadAction(la.dataset.slug, la.dataset.id, la.dataset.next); return; }
+  const rh = e.target.closest("[data-rehunt]");
+  if (rh) { e.preventDefault(); rehunt(rh.dataset.rehunt); }
+});
 function updateStopBtn(stop) {
   CONFIG.stop = !!stop;
   const b = $("#stopbtn"); if (!b || CONFIG.read_only) return;
@@ -344,7 +362,11 @@ async function render({ silent = false } = {}) {
   $("#crumb").textContent = name[0].toUpperCase() + name.slice(1) + (h[1] ? " · " + decodeURIComponent(h[1]) : "");
   if (!silent) view.innerHTML = '<div class="skeleton"></div>';
   try { await fn(h[1] ? decodeURIComponent(h[1]) : undefined); }
-  catch (e) { view.innerHTML = `<div class="empty">⚠ ${esc(e.message)}</div>`; }
+  catch (e) {
+    // a transient live-refresh failure must not wipe the user's current view — toast instead
+    if (silent) { toast("refresh failed", true); return; }
+    view.innerHTML = `<div class="empty">⚠ ${esc(e.message)}</div>`;
+  }
   main.scrollTop = silent ? scroll : 0;
 }
 
