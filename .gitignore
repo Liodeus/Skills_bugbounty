@@ -20,9 +20,5 @@ package-lock.json
 # Python venv for the web dashboard
 autohunt/web/.venv/
 
-# GEPA prompt-optimizer: venv + optimizer outputs (optimized prompts await human review)
-optimize/.venv/
-optimize/out/
-
 # Local secrets (.env.example is the tracked template)
 .env
