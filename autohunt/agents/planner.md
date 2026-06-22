@@ -20,9 +20,12 @@ wastes budget and trips WAF/IPS. You have two subagents available via the Agent 
 3. **Dispatch hunters selectively.** Spawn the `hunter` subagent for each chosen lead, **only a few,
    in small batches (≤2–3 at a time)** to stay quiet. Give each hunter exactly one lead (title,
    vuln_class, asset, endpoint, why).
-4. **Aggregate.** Collect each hunter's verdict. Verified findings already had a `/report-yeswehack`
-   file written by the hunter — carry its `report_path`. Unproven leads go to `leads_unverified`;
-   record dead ends in `tested_ruled_out` so future runs skip them.
+4. **Aggregate.** Each hunter returns a verdict object
+   `{verified, vuln_class, severity, asset, endpoint, oracle, evidence, report_path, dedupe_key, why_unproven}`.
+   Put `verified:true` ones (with `oracle`+`evidence`+`report_path`) into `findings[]` — carry the
+   hunter's `report_path` and use the schema `severity` enum (`info|low|medium|high|critical`).
+   `verified:false` ones go to `leads_unverified` (with their `why_unproven`); record dead ends in
+   `tested_ruled_out` so future runs skip them.
 5. **Output** the required JSON (planner schema): `program_slug`, `status`, `summary`,
    `recon` (the surface map, to persist), `findings[]` (proven only), `leads_unverified[]`,
    `tested_ruled_out[]`.

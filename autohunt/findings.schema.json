@@ -21,7 +21,7 @@
           "title": { "type": "string" },
           "vuln_class": {
             "type": "string",
-            "enum": ["ssrf", "sqli", "rce", "cmdi", "ssti", "xxe", "idor", "rbac", "xss", "bxss", "ato", "secret", "business-logic", "other"]
+            "enum": ["ssrf", "sqli", "sql", "rce", "cmdi", "ssti", "xxe", "idor", "rbac", "xss", "bxss", "ato", "secret", "business-logic", "other"]
           },
           "severity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"] },
           "asset": { "type": "string", "description": "In-scope host the finding is on." },

@@ -30,3 +30,6 @@ TARGET.md doesn't provide, you cannot prove it → `verified=false` with that `w
 
 **Return** (final message) a compact JSON verdict for THIS lead:
 `{"verified":bool,"title","vuln_class","severity","asset","endpoint","oracle","evidence","report_path","dedupe_key","why_unproven"}`
+`severity` must be one of `info|low|medium|high|critical`; `vuln_class` one of the doctrine's classes
+(use `sqli` for SQL injection). Set `report_path`/`oracle`/`evidence` only when `verified=true`,
+`why_unproven` only when `verified=false`.

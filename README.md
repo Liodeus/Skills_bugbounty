@@ -167,6 +167,19 @@ built in: per-target + global `$` caps (notional "usage units" on a subscription
 firewall, and a **circuit-breaker** that halts on repeated auth/network failures. Findings are still
 **human-gated** — autohunt writes reports + alerts Discord; you review and submit.
 
+**What you must supply for full *proof* coverage** (otherwise these classes are surfaced as leads, not
+proven — which is the safe, correct default):
+- **A pollable OOB host** for `--oob` — an interactsh/OAST-style host whose request log the agent can
+  query over HTTP. Blind SSRF / OOB SQLi / OOB XXE / blind RCE / blind-stored XSS are confirmed by the
+  agent *reading the canary's hits*, so a write-only or DNS-only collector isn't enough. There is no
+  built-in collector — bring your own. (Metadata SSRF via `169.254.169.254` still works without `--oob`.)
+- **Chromium/Playwright** (from `./install_tools.sh`) — the XSS execution oracle (`xss-confirm.js`)
+  needs it; without it reflected/DOM XSS stays lead-only.
+- **Per-program creds** at `data/creds/<slug>.json` (≥2 accounts) — what turns IDOR / RBAC / ATO from
+  leads into proven findings. No auto-signup; stage them per program you care about.
+
+Note: `--capture caido` is a no-op stub — use `--capture mitmdump` for traffic capture.
+
 **Hitting your Claude usage limit is handled automatically:** when a session reports a usage/rate
 limit, autohunt **pauses until the window resets and retries the same target** (it reads the reset
 time if present, else waits `--usage-backoff` seconds, up to `--max-usage-waits` cycles) — and pings

@@ -53,6 +53,9 @@ a correct, valuable outcome** — report it as `status: no_findings`. Specifical
   reports whether `alert(NONCE)` fired). If you can't run it, the lead is `needs_browser`.
 - **Blind/stored XSS** → OOB callback in the payload observed firing (`/bxss` skill).
 - **Secret/key in JS** → make ONE benign authenticated call proving the key is live.
+- **Business-logic** → demonstrate the unintended state/value change end-to-end with concrete
+  before/after evidence (e.g. price/quantity/role/balance actually changed), not a theoretical flow.
+- **Command injection** uses the `/rce` skill (there is no `/cmdi` skill).
 
 If a candidate can't clear its oracle, it is a lead, not a finding. No exceptions.
 
@@ -92,7 +95,8 @@ Stay on the allowlist in `TARGET.md`. Never actively test out-of-scope hosts.
    oracle**. Replay to confirm reproducibility. Active fuzzing (`ffuf`) only lightly, small
    wordlist, low concurrency, and **never if a WAF is detected** (403/406/451/block page).
 5. **Use the skills** in `.claude/skills/` (`/idor`, `/xss`, `/sql`, `/ssrf`, `/ssti`, `/rce`,
-   `/xxe`, `/rbac`, `/bxss`, `/ato`, `/waf-bypass`, `/ffuf-skill`) for technique depth.
+   `/xxe`, `/rbac`, `/bxss`, `/ato`, `/waf-bypass`, `/ffuf-skill`) for technique depth, and
+   `/report-yeswehack` to write each verified finding's report.
 
 ## Operational guardrails (hard limits)
 - **Rate caps are ENFORCED by a firewall — always pass the rate flags** (calls without them are
@@ -117,9 +121,11 @@ Discord — the orchestrator does that for verified findings.
 
 ## Output contract (REQUIRED)
 Your final message MUST be the structured JSON object matching the provided schema:
-`{ program_slug, status, summary, findings[], leads_unverified[] }`. Put only proven issues in
-`findings[]` (each with `verified:true`, `oracle`, `evidence`, `dedupe_key`, and `report_path`).
-Everything else goes in `leads_unverified[]`. If nothing was proven, return `status:"no_findings"`
-with an empty `findings[]` — that is a correct, valuable outcome. Never fabricate a finding.
+`{ program_slug, status, summary, findings[], leads_unverified[], tested_ruled_out[] }`. Put only
+proven issues in `findings[]` (each with `verified:true`, `oracle`, `evidence`, `dedupe_key`, and
+`report_path`). Everything promising-but-unproven goes in `leads_unverified[]`. Put what you **tested
+and ruled out** in `tested_ruled_out[]` (each `{what, why}`) so future runs don't re-tread it. If
+nothing was proven, return `status:"no_findings"` with an empty `findings[]` — that is a correct,
+valuable outcome. Never fabricate a finding.
 
 **Impact. Always impact. Prove it or drop it.**
