@@ -10,6 +10,7 @@
 #   ./run.sh --no-refresh          # skip the scrape; just run the loop on the existing catalog
 #   ./run.sh --monitor             # change-detection pass instead of a hunt (alerts only)
 #   ./run.sh --dashboard           # also start the dashboard (http://127.0.0.1:8675)
+#   ./run.sh --dashboard --public  # expose the dashboard on 0.0.0.0 (LAN/VPN); needs AUTOHUNT_WEB_PASSWORD in .env
 #   ./run.sh --every 3600 -- --only-changed   # DAEMON: re-scrape + hunt every hour until STOP
 #   ./run.sh -- --program acme --model sonnet     # pass args through to autohunt.py
 #
@@ -24,13 +25,14 @@ cd "$REPO"
 export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"            # recon tools / mitmproxy install here
 PY="${PYTHON:-python3}"
 
-PUBLIC_ONLY=0; NO_REFRESH=0; MONITOR=0; DASHBOARD=0; EVERY=0; PASS=()
+PUBLIC_ONLY=0; NO_REFRESH=0; MONITOR=0; DASHBOARD=0; PUBLIC=0; EVERY=0; PASS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --public-only) PUBLIC_ONLY=1 ;;
     --no-refresh)  NO_REFRESH=1 ;;
     --monitor)     MONITOR=1 ;;
     --dashboard)   DASHBOARD=1 ;;
+    --public)      PUBLIC=1 ;;
     --every)       shift; EVERY="${1:-0}" ;;
     --) shift; PASS=("$@"); break ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -56,8 +58,13 @@ ok "kill-switch: touch ${REPO}/data/hunts/STOP to halt the loop gracefully."
 # --- optional dashboard (background) ---
 if [ "$DASHBOARD" = 1 ]; then
   DPY="$REPO/autohunt/web/.venv/bin/python"; [ -x "$DPY" ] || DPY="$PY"
-  ok "starting dashboard → http://127.0.0.1:8675"
-  nohup "$DPY" autohunt/web/server.py --data-dir data --port 8675 >/tmp/autohunt-web.log 2>&1 &
+  DASH_HOST=127.0.0.1
+  if [ "$PUBLIC" = 1 ]; then
+    DASH_HOST=0.0.0.0
+    [ -n "${AUTOHUNT_WEB_PASSWORD:-}" ] || { echo "ERROR: --public needs AUTOHUNT_WEB_PASSWORD set in .env."; exit 2; }
+  fi
+  ok "starting dashboard → http://${DASH_HOST}:8675"
+  nohup "$DPY" autohunt/web/server.py --data-dir data --host "$DASH_HOST" --port 8675 >/tmp/autohunt-web.log 2>&1 &
 fi
 
 STOPFILE="$REPO/data/hunts/STOP"

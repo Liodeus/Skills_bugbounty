@@ -10,12 +10,15 @@ Run:
 """
 import argparse
 import asyncio
+import base64
 import json
+import os
+import secrets
 import sys
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -29,7 +32,46 @@ app = FastAPI(title="autohunt dashboard")
 STORE: DataStore = None  # set in main()
 READ_ONLY = False        # set in main() via --read-only
 BIND_HOST = "127.0.0.1"  # set in main(); enables the rebinding guard when loopback
+WEB_USER = ""            # set in main() from AUTOHUNT_WEB_USER (default "admin")
+WEB_PASS = ""            # set in main() from AUTOHUNT_WEB_PASSWORD; empty disables auth
 _LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+
+
+def _load_dotenv(path: Path):
+    """Load KEY=VALUE lines from .env into the environment (without overriding existing vars),
+    so a standalone `python server.py` picks up AUTOHUNT_WEB_PASSWORD the same way run.sh does."""
+    try:
+        for raw in path.read_text().splitlines():
+            s = raw.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            s = s[7:] if s.startswith("export ") else s
+            k, _, v = s.partition("=")
+            k = k.strip()
+            if k and k not in os.environ:
+                os.environ[k] = v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+
+
+@app.middleware("http")
+async def _basic_auth(request: Request, call_next):
+    """Gate the entire app (pages, JSON API, SSE, static) behind HTTP Basic when a password is
+    configured. No-op when WEB_PASS is empty, preserving the password-less localhost default."""
+    if WEB_PASS:
+        hdr = request.headers.get("authorization", "")
+        ok = False
+        if hdr.startswith("Basic "):
+            try:
+                user, _, pw = base64.b64decode(hdr[6:]).decode("utf-8").partition(":")
+                ok = (secrets.compare_digest(user, WEB_USER)
+                      and secrets.compare_digest(pw, WEB_PASS))
+            except Exception:
+                ok = False
+        if not ok:
+            return Response("Authentication required", status_code=401,
+                            headers={"WWW-Authenticate": 'Basic realm="autohunt"'})
+    return await call_next(request)
 
 
 def store() -> DataStore:
@@ -219,20 +261,30 @@ app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 # --------------------------------------------------------------------------- #
 def main():
-    global STORE, READ_ONLY, BIND_HOST
+    global STORE, READ_ONLY, BIND_HOST, WEB_USER, WEB_PASS
+    _load_dotenv(REPO / ".env")
     ap = argparse.ArgumentParser(description="autohunt web dashboard.")
     ap.add_argument("--data-dir", default=str(REPO / "data"), help="autohunt data/ dir to plug into.")
-    ap.add_argument("--host", default="127.0.0.1", help="bind host (default localhost).")
+    ap.add_argument("--host", default="127.0.0.1", help="bind host (default localhost; use 0.0.0.0 to expose on the network).")
     ap.add_argument("--port", type=int, default=8675)
     ap.add_argument("--read-only", action="store_true", help="Disable triage write actions (view only).")
     args = ap.parse_args()
 
     READ_ONLY = args.read_only
     BIND_HOST = args.host
+    WEB_USER = os.environ.get("AUTOHUNT_WEB_USER", "admin")
+    WEB_PASS = os.environ.get("AUTOHUNT_WEB_PASSWORD", "")
+
+    # Fail-closed: never expose data on a non-loopback host without a password.
+    if args.host not in _LOOPBACK and not WEB_PASS:
+        sys.exit(f"refusing to bind {args.host} without AUTOHUNT_WEB_PASSWORD — "
+                 f"set it in .env (and AUTOHUNT_WEB_USER, default 'admin'), or bind 127.0.0.1.")
+
     STORE = DataStore(args.data_dir)
     if not STORE.root.exists():
         print(f"WARNING: data dir {STORE.root} does not exist yet — dashboard will be empty.", file=sys.stderr)
-    print(f"autohunt dashboard → http://{args.host}:{args.port}  (data: {STORE.root})", file=sys.stderr)
+    auth = f"auth: on, user={WEB_USER}" if WEB_PASS else "auth: off — localhost only"
+    print(f"autohunt dashboard → http://{args.host}:{args.port}  (data: {STORE.root})  ({auth})", file=sys.stderr)
 
     import uvicorn
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

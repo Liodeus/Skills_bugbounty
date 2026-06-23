@@ -31,7 +31,7 @@ autohunt.py  (the auto-loop, per program)
   └─ Discord + ledger + cost report
         → data/hunts/{ledger.jsonl, status.json, findings_index.json, alerts.jsonl, cost_report.md}
 
-autohunt/web/server.py       →  read-only dashboard at http://127.0.0.1:8675 (live SSE)
+autohunt/web/server.py       →  dashboard at http://127.0.0.1:8675 (live SSE; --host 0.0.0.0 + password to expose)
 ```
 
 The auto-loop is **precision-first**: a finding is only reported if exploitation was *executed*
@@ -114,11 +114,22 @@ python autohunt.py --mode planner --bbp-only --oob your.canary.host
 
 # 4. Watch it live (dashboard) — live SSE; triage actions enabled (--read-only to disable)
 pip install -r autohunt/web/requirements.txt        # first time (or use autohunt/web/.venv)
-python autohunt/web/server.py --data-dir data       # http://127.0.0.1:8675
+python autohunt/web/server.py --data-dir data       # http://127.0.0.1:8675 (localhost, no auth)
+
+# Expose it on your network (LAN/VPN/Tailscale) behind a password:
+#   set AUTOHUNT_WEB_PASSWORD (and optionally AUTOHUNT_WEB_USER, default 'admin') in .env, then:
+AUTOHUNT_WEB_PASSWORD=secret python autohunt/web/server.py --data-dir data --host 0.0.0.0
+#   or: ./run.sh --dashboard --public
 ```
 
 From the dashboard you can also **triage**: toggle the STOP kill-switch, dismiss/reopen leads, and
 queue a program for re-hunt. Start it with `--read-only` to make it view-only.
+
+**Network exposure & auth.** By default the dashboard binds `127.0.0.1` with no password. To reach
+it from other machines, bind `--host 0.0.0.0` and set `AUTOHUNT_WEB_PASSWORD` in `.env` — HTTP Basic
+Auth then gates every route (pages, API, SSE). As a safety net the server **refuses to start on a
+non-loopback host without a password**. Basic-over-HTTP is fine on a trusted LAN/VPN/Tailscale; put
+it behind a TLS reverse proxy or tunnel if it will ever be internet-facing.
 
 **Kill-switch:** `touch data/hunts/STOP` halts the loop before the next program.
 
