@@ -105,12 +105,12 @@ export YWH_PASSWORD=...             # TOTP is prompted interactively if 2FA is o
 export DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...   # optional but recommended
 
 # 3. Kick off everything: refresh catalog → run the auto-loop
-./run.sh --bbp-only -- --max-budget-usd 5 --max-total-usd 50 --oob your.canary.host
+./run.sh --bbp-only -- --oob your.canary.host
 
 # …or step by step:
 python yeswehack_programs.py            # build data/yeswehack/  (--public-only to skip login)
 python autohunt.py --dry-run            # preview the prioritized queue (no spend)
-python autohunt.py --mode planner --bbp-only --max-budget-usd 5 --oob your.canary.host
+python autohunt.py --mode planner --bbp-only --oob your.canary.host
 
 # 4. Watch it live (dashboard) — live SSE; triage actions enabled (--read-only to disable)
 pip install -r autohunt/web/requirements.txt        # first time (or use autohunt/web/.venv)
@@ -134,9 +134,11 @@ credits. It never uses `--bare` (which would require an API key).
 - **Prerequisite:** be logged in — run `claude` once and `/login` (Pro/Max). autohunt warns at start
   if no subscription login is detected.
 - **To bill the API instead:** pass `--use-api` (keeps `ANTHROPIC_API_KEY`).
-- Note: the `$` figures in the ledger / `cost_report.md` are **usage estimates**; on a subscription
-  the real limit is your plan's rate limits, and `--max-budget-usd`/`--max-total-usd` act as
-  estimate-based stop guards.
+- Note: the `$` figures in the ledger / `cost_report.md` are **usage estimates only** — there is no
+  dollar budget cap. On a subscription the single real limit is your plan's usage window: when it's
+  hit, autohunt pauses and automatically resumes once the window resets (see `--usage-backoff` /
+  `--max-usage-waits`). The `STOP` kill-switch and the consecutive-failure circuit breaker are the
+  other ways a run ends early.
 
 ## Fully unattended operation
 
@@ -157,7 +159,7 @@ The scraper also auto-detects a non-TTY and **refuses to prompt** (fails fast) r
 **Launch and walk away:**
 ```bash
 # one full headless sweep (scrape → hunt every catalogued program):
-./run.sh -- --bbp-only --max-budget-usd 4 --oob your.canary.host
+./run.sh -- --bbp-only --oob your.canary.host
 
 # continuous daemon — re-scrape + hunt new/changed programs forever, until you STOP it:
 ./run.sh --every 3600 -- --only-changed --bbp-only --oob your.canary.host
@@ -212,7 +214,7 @@ Per program, one **planner** `claude -p` session:
 | `--mode planner` (default) | Planner dispatches `recon`/`hunter` subagents. `--mode single` = one monolithic agent. |
 | `--monitor` | Re-probe known surface for changes → triage agent → Discord alert (no hunting). |
 | `--program <slug>` / `--limit N` / `--only-changed` / `--bbp-only` | Pick & scope the queue. |
-| `--max-budget-usd` / `--max-total-usd` / `--max-turns` / `--timeout` | Budget & time caps. |
+| `--max-turns` / `--timeout` | Per-session turn & wall-clock caps. (No dollar budget cap — the subscription usage window is the only spend limit.) |
 | `--max-rps` (8) / `--max-conc` (10) | **Enforced** scan-tool rate/concurrency caps (anti-IPS). |
 | `--model` / `--verify-model` | Planner & refuter model — **default `opus`** (4.8). The planner picks each subagent's model itself (sonnet/opus). `sonnet` for cheaper/broader sweeps. |
 | `--effort` | Reasoning effort for every session — **default `high`** (`low`/`medium`/`high`/`xhigh`/`max`). |
@@ -242,7 +244,9 @@ no-spend static check) confirms tools, auth, schemas, and the firewall are all h
   and blocks flood patterns (`while true`/`while :`/`until false`, huge `seq`/brace ranges,
   `xargs -P`) — so the loop won't trip a WAF/IPS. For any other tool, the doctrine's ≤8 req/s rule
   (and the optional `--rate-proxy`) applies.
-- **Budget caps** per target and globally; a `data/hunts/STOP` **kill-switch**.
+- A `data/hunts/STOP` **kill-switch** and a consecutive-failure circuit breaker. (No dollar budget
+  cap — on a subscription the only spend limit is your plan's usage window, which the run pauses on
+  and resumes after.)
 - Inherited guardrails (doctrine): ≤8 req/s, no DoS, no mass enumeration, no destructive actions
   without a safe revert, WAF-detected → stop.
 

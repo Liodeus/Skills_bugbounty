@@ -11,7 +11,7 @@
 #   ./run.sh --monitor             # change-detection pass instead of a hunt (alerts only)
 #   ./run.sh --dashboard           # also start the dashboard (http://127.0.0.1:8675)
 #   ./run.sh --every 3600 -- --only-changed   # DAEMON: re-scrape + hunt every hour until STOP
-#   ./run.sh -- --program acme --max-budget-usd 4 --model sonnet     # pass args through to autohunt.py
+#   ./run.sh -- --program acme --model sonnet     # pass args through to autohunt.py
 #
 # Anything after `--` is passed verbatim to autohunt.py. Kill-switch: `touch data/hunts/STOP`.
 # Fully unattended: set YWH_TOTP_SECRET (or YWH_PAT) in .env so the scrape never prompts; the

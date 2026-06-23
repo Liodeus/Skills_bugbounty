@@ -16,13 +16,14 @@ Design follows Fahad Faisal's "AI Agents in Bug Bounty": a planner with speciali
 one big prompt), persistent memory, change-detection, and hard anti-slop discipline (prove it or
 drop it).
 
-Safety: per-target + global budget caps, a data/hunts/STOP kill-switch, and a PreToolUse firewall
-hook that blocks out-of-scope hosts AND enforces scan-tool rate/concurrency caps (even under
---dangerously-skip-permissions, and for subagent tool calls too). No reports are auto-submitted.
+Safety: a data/hunts/STOP kill-switch and a PreToolUse firewall hook that blocks out-of-scope
+hosts AND enforces scan-tool rate/concurrency caps (even under --dangerously-skip-permissions, and
+for subagent tool calls too). No dollar budget caps — on a Claude subscription the only limit is
+your plan's usage window (the run pauses and resumes across it). No reports are auto-submitted.
 
 Examples:
   python autohunt.py --dry-run
-  python autohunt.py --program acme --mode planner --max-budget-usd 4 --model sonnet
+  python autohunt.py --program acme --mode planner --model sonnet
   python autohunt.py --only-changed --model opus --verify-model opus --oob your.canary.host
   python autohunt.py --monitor                      # change-detection pass (schedule via cron/loop)
 """
@@ -649,7 +650,9 @@ _DEGEN_RETRIES = 2     # retry a transient empty/unusable "success" this many ti
 _DEGEN_BACKOFF = 20    # seconds between those retries
 
 
-def run_claude(prompt, schema, ws, env, args, max_turns, max_budget, model=None):
+def run_claude(prompt, schema, ws, env, args, max_turns, model=None):
+    # No --max-budget-usd: on a subscription the only limit is the plan's usage window (handled by
+    # the usage-limit backoff below), so the CLI must never self-terminate with error_max_budget_usd.
     cmd = ["claude", "-p", prompt,
            # Skills are copied into ws/.claude/skills (cwd-local), so no --add-dir is needed and the
            # conflicting manual SKILLS/CLAUDE.md never enters context.
@@ -659,7 +662,6 @@ def run_claude(prompt, schema, ws, env, args, max_turns, max_budget, model=None)
            "--settings", str(ws / ".claude" / "settings.json"),
            "--permission-mode", args.permission_mode,
            "--max-turns", str(max_turns),
-           "--max-budget-usd", str(max_budget),
            "--json-schema", schema,
            "--output-format", "json",
            "--session-id", str(uuid.uuid4())]
@@ -677,7 +679,7 @@ def run_claude(prompt, schema, ws, env, args, max_turns, max_budget, model=None)
             proc = subprocess.run(cmd, cwd=str(ws), env=env, capture_output=True, text=True,
                                   timeout=args.timeout, stdin=subprocess.DEVNULL)
         except subprocess.TimeoutExpired:
-            return {"_timeout": True, "subtype": "timeout", "total_cost_usd": max_budget}
+            return {"_timeout": True, "subtype": "timeout", "total_cost_usd": 0.0}
         except FileNotFoundError:
             sys.exit("`claude` CLI not found on PATH. Install Claude Code or run with --dry-run.")
 
@@ -691,7 +693,7 @@ def run_claude(prompt, schema, ws, env, args, max_turns, max_budget, model=None)
                 obj = _scan_json(proc.stdout)
                 result = obj if obj is not None else {
                     "_unparsed": proc.stdout[-2000:], "subtype": "unparsed",
-                    "total_cost_usd": max_budget, "_stderr": stderr_tail}
+                    "total_cost_usd": 0.0, "_stderr": stderr_tail}
 
         # Usage-limit aware backoff: pause until the window resets and retry the SAME call,
         # rather than burning the program into "failed". (STOP aborts the wait.)
@@ -757,7 +759,7 @@ def run_verifier(finding, ws, env, args):
     for k in ("title", "vuln_class", "severity", "asset", "endpoint", "oracle", "evidence"):
         prompt = prompt.replace("{" + k + "}", str(finding.get(k, "")))
     result = run_claude(prompt, VERIFIER_SCHEMA, ws, env, args,
-                        args.verify_max_turns, args.verify_budget, model=args.verify_model)
+                        args.verify_max_turns, model=args.verify_model)
     return extract_structured(result), phase_info(result, "verify")
 
 
@@ -766,7 +768,7 @@ def run_verifier(finding, ws, env, args):
 # --------------------------------------------------------------------------- #
 def hunt_single(p, ws, env, args, mem):
     res = run_claude((ws / "run_prompt.md").read_text(), FINDINGS_SCHEMA.read_text(), ws, env, args,
-                     args.max_turns, args.max_budget_usd)
+                     args.max_turns)
     ph = phase_info(res, "hunt")
     s = extract_structured(res)
     if s is None:
@@ -784,11 +786,11 @@ def hunt_single(p, ws, env, args, mem):
 def hunt_planner(p, ws, env, args, mem):
     """Single planner session that inspects the surface, then dispatches native subagents
     (recon, hunter) only where warranted. One claude -p; subagents run inside it (governed by
-    the same scope+rate firewall hook). Per-target --max-budget-usd is the global ceiling."""
+    the same scope+rate firewall hook). No dollar cap — the plan's usage window is the only limit."""
     prompt = ((AGENTS / "planner.md").read_text()
               + f"\n\nProgram: \"{p['title']}\" (slug: {p['slug']}). Follow CLAUDE.md and TARGET.md.")
     res = run_claude(prompt, (SCHEMAS / "planner.schema.json").read_text(), ws, env, args,
-                     args.max_turns, args.max_budget_usd)
+                     args.max_turns)
     ph = phase_info(res, "planner")
     s = extract_structured(res)
     if s is None:
@@ -975,7 +977,7 @@ def monitor_pass(programs, args):
         for ch in changes:
             prompt = (AGENTS / "monitor-triage.md").read_text() + "\n\nCHANGE:\n" + json.dumps(ch, ensure_ascii=False)
             res = run_claude(prompt, (SCHEMAS / "monitor.schema.json").read_text(), ws, env, args,
-                             args.verify_max_turns, args.verify_budget, model=args.verify_model)
+                             args.verify_max_turns, model=args.verify_model)
             v = extract_structured(res) or {}
             if v.get("worth_investigating"):
                 total_changes += 1
@@ -1080,11 +1082,14 @@ def parse_args():
     ap.add_argument("--use-api", action="store_true",
                     help="Bill the Anthropic API (keep ANTHROPIC_API_KEY). Default: use your Claude subscription.")
     ap.add_argument("--max-turns", type=int, default=80, help="Per-session turn cap (planner + its subagents).")
-    ap.add_argument("--max-budget-usd", type=float, default=5.0, help="Per-target $ ceiling (global, incl. subagents).")
     ap.add_argument("--timeout", type=int, default=3000, help="Per-session wall-clock seconds.")
-    ap.add_argument("--max-total-usd", type=float, default=50.0, help="Global $ cap for the run.")
     ap.add_argument("--verify-max-turns", type=int, default=20)
-    ap.add_argument("--verify-budget", type=float, default=1.5)
+    # Deprecated, accepted-but-ignored: there is NO dollar budget cap any more. On a Claude
+    # subscription the only limit is the plan's usage window. Kept so old commands/daemons that
+    # still pass these flags don't error out with "unrecognized arguments".
+    ap.add_argument("--max-budget-usd", type=float, default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--max-total-usd", type=float, default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--verify-budget", type=float, default=None, help=argparse.SUPPRESS)
     ap.add_argument("--throttle", type=float, default=5.0, help="Sleep between targets.")
     ap.add_argument("--max-rps", type=float, default=8, help="Enforced max request-rate flag for scan tools.")
     ap.add_argument("--max-conc", type=float, default=10, help="Enforced max concurrency/threads flag for scan tools.")
@@ -1175,8 +1180,8 @@ def run_once(args):
         return
 
     log(f"Run: {len(queue)} program(s). mode={args.mode} auth={'api' if args.use_api else 'subscription'} "
-        f"model={args.model} effort={args.effort} verify={args.verify_model} per-target=${args.max_budget_usd} "
-        f"global=${args.max_total_usd} rps≤{args.max_rps} capture={args.capture}")
+        f"model={args.model} effort={args.effort} verify={args.verify_model} budget=none(usage-window only) "
+        f"rps≤{args.max_rps} capture={args.capture}")
     discord_send(content=f"🚀 autohunt ({args.mode}) — {len(queue)} program(s) queued.")
 
     oob_proc = start_oob(args)   # autonomous OOB canary via interactsh when --oob auto
@@ -1188,11 +1193,8 @@ def run_once(args):
             log("STOP sentinel — halting.")
             discord_send(content="🛑 autohunt halted (STOP).")
             break
-        if total_cost + args.max_budget_usd > args.max_total_usd:  # look-ahead: don't overshoot
-            log(f"Global budget ${args.max_total_usd} would be exceeded by the next target — halting "
-                f"(~${total_cost:.2f} spent).")
-            discord_send(content=f"💰 autohunt halted — global budget ${args.max_total_usd} reached (~${total_cost:.2f}).")
-            break
+        # No dollar budget halt: the only limit is the subscription usage window, which run_claude
+        # handles by pausing and resuming. STOP + the consecutive-failure circuit breaker remain.
 
         allow, seeds, out_hosts = compute_scope(p)
         log(f"[{i}/{len(queue)}] {p['slug']} — {len(allow)} host(s), max ${p['bounty_max']}")
@@ -1330,8 +1332,7 @@ def run_selftest(args):
         print("\nFAIL — claude CLI required for the live hunt.")
         return 1
 
-    print("\nRunning a benign live hunt against example.com (small spend)…")
-    args.max_budget_usd = min(args.max_budget_usd, 1.0)
+    print("\nRunning a benign live hunt against example.com (kept small via --max-turns)…")
     args.max_turns = min(args.max_turns, 20)
     args.model = args.verify_model = "sonnet"
     args.no_verify = True
