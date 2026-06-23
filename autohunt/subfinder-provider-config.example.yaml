@@ -1,0 +1,31 @@
+# subfinder provider config — API keys for deeper passive subdomain coverage.
+# Copy to ~/.config/subfinder/provider-config.yaml and fill in the keys you have, then recon runs
+# `subfinder -all` and pulls from every one you configured. Each value is a YAML list (multiple keys
+# rotate). Everything here is OPTIONAL — subfinder works on free CT sources without any key.
+#
+#   cp autohunt/subfinder-provider-config.example.yaml ~/.config/subfinder/provider-config.yaml
+#
+# See docs/subdomain-enum-providers.md for what each is, pricing, and which find "subdomains nobody
+# else has" (BeVigil = mobile-app-mined, RedHunt = GitHub leaks, IntelX = breach data, etc.).
+
+# --- mainstream / best coverage ---
+# securitytrails: ["KEY"]
+# shodan: ["KEY"]
+# censys: ["PERSONAL_ACCESS_TOKEN:ORG_ID"]     # Platform API format (NOT the old api-id:secret)
+# fullhunt: ["KEY"]
+# netlas: ["KEY"]                               # non-default; -all enables it
+# c99: ["KEY"]
+# fofa: ["email@example.com:KEY"]
+# whoisxmlapi: ["KEY"]
+# github: ["GITHUB_PERSONAL_ACCESS_TOKEN"]      # scrapes subdomains from code search
+
+# --- free, always worth enabling ---
+# chaos: ["KEY"]                                # free key from cloud.projectdiscovery.io (BB-program scope)
+
+# --- "subdomains nobody else has" (unique data sources) ---
+# bevigil: ["KEY"]                              # mined from decompiled mobile apps (internal/staging hosts)
+# redhuntlabs: ["KEY"]                          # GitHub-commit leak mining + reverse-WHOIS
+# leakix: ["KEY"]                               # exposure/misconfig engine + subdomains
+# intelx: ["2.intelx.io:KEY"]                   # breach/paste/darkweb data (paid key required)
+# merklemap: ["KEY"]                            # deep real-time Certificate Transparency index
+# urlscan: ["KEY"]                              # crowdsourced live-scan dataset

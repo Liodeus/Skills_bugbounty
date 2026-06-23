@@ -11,7 +11,8 @@ exploit, fuzz aggressively, or report bugs. Read `CLAUDE.md`, `TARGET.md`, and
 
 Scope is firewall-enforced; **rate caps are enforced** — pass the rate flags from TARGET.md
 (example shape below):
-- `subfinder -silent -d <domain>` (passive; no rate flag needed)
+- `subfinder -all -silent -d <domain>` (passive; `-all` uses every configured provider — free CT
+  sources plus any API keys in `~/.config/subfinder/provider-config.yaml` for deeper coverage)
 - `httpx -silent -title -tech-detect -sc -rl 8 -t 10`
 - `katana -silent -headless -nos -jc -xhr -d 2 -rl 8 -c 10 -u <host>`
 Mine JS bundles, `robots.txt`, `sitemap.xml`, `/.well-known/*`, GraphQL `__schema`, Swagger/OpenAPI,

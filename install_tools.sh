@@ -108,6 +108,8 @@ install_recon(){
   dl_bin nuclei    projectdiscovery/nuclei    "$rx"
   dl_bin dnsx      projectdiscovery/dnsx      "$rx"
   dl_bin ffuf      ffuf/ffuf                  "$rx"
+  # interactsh-client: autonomous OOB canary for blind SSRF/XXE/RCE/bxss (--oob auto)
+  dl_bin interactsh-client projectdiscovery/interactsh "interactsh-client_.*${OST}_${ARCH}\\.(zip|tar\\.gz)$"
 }
 
 install_mitm(){
@@ -164,10 +166,19 @@ ensure_path(){
   # autohunt.py and run.sh also add ~/.local/bin at runtime, so launches work regardless.
 }
 
+seed_subfinder_config(){
+  local dst="$HOME/.config/subfinder/provider-config.yaml"
+  local src="$REPO/autohunt/subfinder-provider-config.example.yaml"
+  [ -f "$dst" ] && { ok "subfinder provider-config present ($dst)"; return; }
+  [ -f "$src" ] || return
+  mkdir -p "$(dirname "$dst")" && cp "$src" "$dst" \
+    && ok "seeded subfinder provider-config → $dst (add your API keys for deeper subdomain coverage)"
+}
+
 report(){
   echo; echo "=== toolchain status ==="
   local t
-  for t in subfinder httpx katana nuclei dnsx ffuf jq claude; do
+  for t in subfinder httpx katana nuclei dnsx ffuf jq claude interactsh-client; do
     if PATH="$BIN:$PATH" have "$t"; then printf "  %-11s ${c_ok}present${c_off}\n" "$t"; else printf "  %-11s ${c_e}MISSING${c_off}\n" "$t"; fi
   done
   [ "$SKIP_CAPTURE" = 0 ] && { if PATH="$BIN:$PATH" have mitmdump; then printf "  %-11s ${c_ok}present${c_off}\n" mitmdump; else printf "  %-11s ${c_e}MISSING${c_off}\n" mitmdump; fi; }
@@ -183,6 +194,7 @@ install_recon
 install_mitm
 install_browser
 ensure_path
+seed_subfinder_config
 report
 echo
 ok "done. Open a new shell (for PATH), then verify with:  python3 autohunt.py --selftest"

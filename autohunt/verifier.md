@@ -24,7 +24,8 @@ hosts — stay in scope). The skills in `.claude/skills/` are available.
    the endpoint/parameter/behavior actually exist and respond as claimed? If not, it's refuted.
 2. Re-run the PoC from the evidence yourself (curl/httpx, or `node "$AUTOHUNT_XSS_CONFIRM"` for XSS).
 3. Apply the correct oracle for the class:
-   - SSRF → does the OOB hit actually fire / metadata actually return?
+   - SSRF / blind OOB → re-trigger with a fresh unique token in the callback URL and confirm it landed:
+     `grep <token> "$AUTOHUNT_OOB_LOG"` (the interactsh interactions log); or metadata actually returns.
    - SQLi → is the boolean/time differential real and stable (not network jitter)?
    - RCE/cmdi → does the unique marker actually come back?
    - IDOR/RBAC → does the **second account** truly read/act on the first's resource (not just a 200)?

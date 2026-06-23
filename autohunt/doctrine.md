@@ -57,6 +57,11 @@ a correct, valuable outcome** — report it as `status: no_findings`. Specifical
   before/after evidence (e.g. price/quantity/role/balance actually changed), not a theoretical flow.
 - **Command injection** uses the `/rce` skill (there is no `/cmdi` skill).
 
+**Confirming an OOB callback (autonomous):** when `$AUTOHUNT_OOB` is set, embed a unique token in the
+callback URL — `http://<token>.$AUTOHUNT_OOB/` or `http://$AUTOHUNT_OOB/<token>` — trigger it, then
+verify it actually arrived with `grep <token> "$AUTOHUNT_OOB_LOG"` (the interactsh interactions log the
+harness maintains; give it a few seconds). A matching hit = proven; no hit after a reasonable wait = lead.
+
 If a candidate can't clear its oracle, it is a lead, not a finding. No exceptions.
 
 **If TARGET.md says no OOB canary is set** (`$AUTOHUNT_OOB` unset), the blind/OOB-only classes
@@ -84,7 +89,7 @@ Stay on the allowlist in `TARGET.md`. Never actively test out-of-scope hosts.
 
 1. **Read** `TARGET.md`: scope, qualifying/non-qualifying vulns, creds.
 2. **Discover (passive first).** For wildcard scopes (`*.example.com`), enumerate passively
-   (`subfinder -silent -d example.com`) then probe live (`httpx -silent -title -tech-detect -sc`).
+   (`subfinder -all -silent -d example.com`) then probe live (`httpx -silent -title -tech-detect -sc`).
    Crawl JS-rendered surface with `katana -silent -headless -nos -jc -xhr -d 2 -rl 8 -c 10 -u <host>`
    (use the exact caps from TARGET.md) to pull
    endpoints/XHRs. Mine JS bundles, `robots.txt`, `sitemap.xml`, `/.well-known/*`, GraphQL

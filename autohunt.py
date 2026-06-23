@@ -451,6 +451,8 @@ def hunter_env(allow, out_hosts, args, capture_env):
     if args.oob:
         env["AUTOHUNT_OOB"] = args.oob
         env["AUTOHUNT_SAFE_HOSTS"] = args.oob
+        if getattr(args, "_oob_log", None):
+            env["AUTOHUNT_OOB_LOG"] = args._oob_log   # agent greps this for its callback tokens
     env.update(capture_env)
     return env
 
@@ -503,6 +505,67 @@ def stop_capture(proc):
         try:
             proc.terminate()
             proc.wait(timeout=10)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+
+# --------------------------------------------------------------------------- #
+# OOB canary (autonomous, via interactsh-client) — no manual URL pasting
+# --------------------------------------------------------------------------- #
+_OAST_RE = re.compile(r"\b([a-z0-9]+\.oast\.[a-z]+)\b", re.I)
+
+
+def start_oob(args):
+    """If `--oob auto`, launch interactsh-client, capture its generated canary host, and stream
+    callbacks to a JSONL the agent can grep. Sets args.oob (the host) + args._oob_log (the file).
+    Returns the client process (or None). No-op for an explicit host or when interactsh is absent."""
+    if str(getattr(args, "oob", "") or "").lower() != "auto":
+        return None
+    if not shutil.which("interactsh-client"):
+        log("--oob auto but interactsh-client not on PATH (run ./install_tools.sh) — "
+            "blind/OOB classes will be recorded as leads.")
+        args.oob = None
+        return None
+    HUNTS.mkdir(parents=True, exist_ok=True)
+    logp = HUNTS / "oob_interactions.jsonl"
+    errp = HUNTS / "oob_client.log"
+    logp.write_text(""); errf = open(errp, "w")
+    server = getattr(args, "oob_server", None)
+    cmd = ["interactsh-client", "-json", "-o", str(logp), "-pi", "5"]
+    if server:
+        cmd += ["-s", server]
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=errf)
+    except Exception as e:
+        log(f"interactsh-client failed to start ({e}) — OOB disabled."); args.oob = None; return None
+    host = None
+    end = time.time() + 20
+    while time.time() < end and host is None:
+        m = _OAST_RE.search(errp.read_text(errors="ignore") if errp.exists() else "")
+        if m:
+            host = m.group(1)
+        elif proc.poll() is not None:
+            break
+        else:
+            time.sleep(0.5)
+    if not host:
+        log("interactsh-client did not return a canary host in time — OOB disabled.")
+        stop_oob(proc); args.oob = None; return None
+    args.oob = host
+    args._oob_log = str(logp)
+    import atexit
+    atexit.register(stop_oob, proc)   # safety net if the run crashes
+    log(f"OOB canary (interactsh): {host}  →  callbacks logged to {logp}")
+    return proc
+
+
+def stop_oob(proc):
+    if proc:
+        try:
+            proc.terminate(); proc.wait(timeout=8)
         except Exception:
             try:
                 proc.kill()
@@ -1004,7 +1067,10 @@ def parse_args():
     ap.add_argument("--throttle", type=float, default=5.0, help="Sleep between targets.")
     ap.add_argument("--max-rps", type=float, default=8, help="Enforced max request-rate flag for scan tools.")
     ap.add_argument("--max-conc", type=float, default=10, help="Enforced max concurrency/threads flag for scan tools.")
-    ap.add_argument("--oob", help="OOB canary host for SSRF/blind oracles.")
+    ap.add_argument("--oob", help="OOB canary host for SSRF/blind oracles. Pass 'auto' to "
+                    "auto-provision one via interactsh-client (no manual host needed); the agent "
+                    "confirms callbacks by reading $AUTOHUNT_OOB_LOG.")
+    ap.add_argument("--oob-server", help="interactsh server(s) for --oob auto (default: public oast.* servers).")
     # --- ad-hoc / ops functionalities ---
     ap.add_argument("--target", help="Hunt an arbitrary authorized URL NOT in the catalog (ad-hoc mode).")
     ap.add_argument("--scope", help="Comma-separated in-scope hosts for --target (default: the target's host).")
@@ -1092,6 +1158,7 @@ def run_once(args):
         f"global=${args.max_total_usd} rps≤{args.max_rps} capture={args.capture}")
     discord_send(content=f"🚀 autohunt ({args.mode}) — {len(queue)} program(s) queued.")
 
+    oob_proc = start_oob(args)   # autonomous OOB canary via interactsh when --oob auto
     rc = new_run_cost()
     total_cost = 0.0
     consec_fail = 0
@@ -1199,6 +1266,7 @@ def run_once(args):
             break
         time.sleep(args.throttle)
 
+    stop_oob(oob_proc)
     write_cost_report(rc)
     log(f"Run complete. ~${total_cost:.2f} total. Cost report: {HUNTS / 'cost_report.md'}")
     discord_send(content=f"✅ autohunt complete — ~${total_cost:.2f}. See cost_report.md.")
