@@ -29,6 +29,26 @@ from pathlib import Path
 import requests
 
 
+def _load_dotenv(path):
+    """Load KEY=VALUE from .env (without overriding existing env) so direct `python3
+    yeswehack_programs.py` picks up YWH_EMAIL/YWH_PASSWORD/YWH_TOTP_SECRET/YWH_PAT like run.sh does."""
+    try:
+        for raw in path.read_text().splitlines():
+            s = raw.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            s = s[7:] if s.startswith("export ") else s
+            k, _, v = s.partition("=")
+            k = k.strip()
+            if k and k not in os.environ:
+                os.environ[k] = v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+
+
+_load_dotenv(Path(__file__).resolve().parent / ".env")
+
+
 def _totp_now(secret, digits=6, period=30, t=None):
     """RFC 6238 TOTP (SHA-1) from a base32 secret — for unattended login (no `input`)."""
     s = re.sub(r"\s+", "", secret).upper()

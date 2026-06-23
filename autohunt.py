@@ -45,6 +45,27 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
+
+
+def _load_dotenv(path):
+    """Load KEY=VALUE lines from .env into the environment (without overriding existing vars), so
+    `python3 autohunt.py` picks up DISCORD_WEBHOOK_URL / YWH creds the same way run.sh does."""
+    try:
+        for raw in path.read_text().splitlines():
+            s = raw.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            s = s[7:] if s.startswith("export ") else s
+            k, _, v = s.partition("=")
+            k = k.strip()
+            if k and k not in os.environ:
+                os.environ[k] = v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+
+
+_load_dotenv(REPO / ".env")
+
 AUTOHUNT = REPO / "autohunt"
 CATALOG = REPO / "data" / "yeswehack"
 HUNTS = REPO / "data" / "hunts"
