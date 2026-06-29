@@ -1,0 +1,15 @@
+{
+  "name": "httpworkbench-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "HTTPWorkbench MCP server used by hunt.sh workspaces (SSRF/XXE/OOB testing).",
+  "type": "module",
+  "bin": {
+    "httpworkbench-mcp": "./httpworkbench_mcp.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@playwright/mcp": "^0.0.41",
+    "node-fetch": "^3.3.2"
+  }
+}
