@@ -23,9 +23,19 @@ Constraints:
   Scanners already pick up the rest.
 - If you lack context on part of the app, say so rather than making
   things up.'
-# Resolve the repo root from this script's own location, so the launcher works
-# wherever the repo is cloned (no hardcoded ~/Documents/ or username assumption).
-SKILLS_BASE="$(cd "$(dirname "$0")" && pwd)"
+# Resolve the repo root from this script's REAL location, following symlinks — so the
+# launcher works whether run as ./hunt.sh, hunt (the ~/.local/bin symlink), or from
+# anywhere. `dirname "$0"` alone would resolve to ~/.local/bin when invoked via the symlink.
+SELF="$0"
+while [ -L "$SELF" ]; do
+    DIR="$(cd "$(dirname "$SELF")" >/dev/null 2>&1 && pwd)"
+    SELF="$(readlink "$SELF")"
+    case "$SELF" in
+        /*) : ;;                 # absolute target — use as-is
+        *)  SELF="$DIR/$SELF" ;; # relative target — resolve against the link's dir
+    esac
+done
+SKILLS_BASE="$(cd "$(dirname "$SELF")" >/dev/null 2>&1 && pwd)"
 MASTER_CLAUDE_MD="$SKILLS_BASE/SKILLS/CLAUDE.md"
 BROWSER_DIR="$SKILLS_BASE/playwright-chrome"
 
