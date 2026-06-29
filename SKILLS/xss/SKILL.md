@@ -96,7 +96,7 @@ Once you've found a reflection, probe what's filtered:
 * `ugrep` for sinks: `innerHTML`, `outerHTML`, `document.write`, `eval`, `setTimeout` with string, `Function(`, `setAttribute('on...`)`, `location =`, `srcdoc =`
 * `ugrep` for sources: `location.hash`, `location.search`, `document.referrer`, `window.name`, `postMessage`, `localStorage`, `document.cookie`, `URLSearchParams`
 * For each sink, trace backward — does data flow from a source to here without sanitization?
-* Tooling: `ugrep -f .claude/skills/recon/dom-sinks.txt js/` (the curated sink+source set ships with `/recon`), then the headless DOM debugger below; manual code review
+* Tooling: `ugrep -f .claude/skills/recon/dom-sinks.txt js/` for sinks/sources (ships with `/recon`); for `postMessage` specifically run `/recon` step H — `postmessage-handlers.txt` + sender-wildcard-leak + origin-check triage. Then the headless DOM debugger below; manual code review
 
 **Static `ugrep` gets you candidates; the live browser confirms the flow.** When you have a
 JS-rendered page, `postMessage`/`addEventListener('message')` handlers, or want to *prove* a

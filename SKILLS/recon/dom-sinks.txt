@@ -1,7 +1,7 @@
 # dom-sinks.txt — ugrep -E regex set for DOM-XSS sinks + postMessage handlers in JS bundles.
 # Usage:  ugrep -aErni --include='*.js' -f dom-sinks.txt js/
 #         ugrep is a drop-in for grep; -a text, -r recurse, -n line numbers, -i case-insensitive.
-# Lines starting with '#' and blank lines are ignored by ugrep -f, so they serve as comments.
+# Note: only blank lines are ignored by ugrep -f. Hash lines are parsed as regex too, so keep them plain prose.
 #
 # Triage note: a hit is a SINK, not a bug. A sink is only exploitable if user-controlled
 # input reaches it without sanitisation. For every cluster of hits, trace the source

@@ -215,16 +215,56 @@ manually before treating it as real.
 
 ## H. Check postMessage handlers
 
-Origin-less `message` listeners are a classic cross-origin DOM-XSS / data-theft primitive.
+Origin-less `message` listeners are a classic cross-origin DOM-XSS / data-theft primitive, and
+sender-side `postMessage(data, '*')` is a quiet data leak. Step I's `dom-sinks.txt` nets
+`.postMessage(` and basic listeners incidentally; **this is the dedicated pass** — receivers,
+sender leaks, and origin-check triage.
+
+The flat grep that used to live here had a hole: the only hit that actually matters — a listener
+with **no** origin check that **also** feeds a sink — is invisible to it on minified single-line
+bundles, where line context (`-A`/`-B`) dumps the whole file. So this step does three things.
+
+> **Resource note:** `ugrep` is auto-capped by the wrapper (`~/.local/bin/ugrep`: 2G RAM, 1 core,
+> first-OOM-victim) so a search can't OOM-kill tmux on this 2-core/no-swap box. For very large `js/`
+> trees, serialize with `ugrep -j 1` and bound any `.{0,N}` snippet output with `| head -c 8M`.
+
+### 1. Hit list — every receiver & sender (curated list)
 
 ```bash
-ugrep -anErh "addEventListener\s*\(\s*[\"'\`]message[\"'\`]|\bonmessage\s*=|\.postMessage\s*\(" js/
+ugrep -anE -f .claude/skills/recon/postmessage-handlers.txt js/ > postmessage_hits.txt
+# (symlinked at .claude/skills/recon/ in a workspace; adjust the path if run elsewhere)
+# covers: window/message listeners, MessageChannel/MessagePort/BroadcastChannel/SharedWorker
+# receivers, all .postMessage senders, and origin/source validation markers (section C).
 ```
 
-For each handler, read the surrounding code: **does it check `event.origin` / `event.source`?**
-- **No origin check + the handler writes `e.data` into a sink** (`innerHTML`, `eval`, navigation)
-  → exploitable from any origin → hand the page + a crafted-message PoC to **`/xss`**.
-- **No origin check but only reads data** → potential data leak; note it, evaluate the chain.
+### 2. Sender-side wildcard leak — a lead on its own
+
+`.postMessage(data, '*')` (or `{targetOrigin:'*'}`) delivers the payload to **every** origin
+holding the window/worker/port ref. If the payload carries tokens / PII / internal data → leak.
+
+```bash
+ugrep -aonE "\.postMessage\s*\([^)]*,\s*[\"'\`]\*[\"'\`]|targetOrigin\s*:\s*[\"'\`]\*" js/
+```
+
+### 3. Handler-body snippet + origin-check triage — the shortlist for /xss
+
+Grab N chars around each listener (works on one-line minified bundles where `-A`/`-B` are useless),
+then keep only snippets that touch a sink **and** lack an origin/source guard:
+
+```bash
+# each message listener + ~400 chars of its body, capped to 8 MB so a match-explosion
+# on a minified single-line bundle can't run away (head closes the pipe -> ugrep stops)
+ugrep -aohE ".{0,60}(addEventListener\(\s*[\"'\`]message|\bonmessage).{0,400}" js/ \
+  | head -c 8388608 \
+  | ugrep -E '\.data|innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval|new\s+Function|location\s*=|\.href|srcdoc|setTimeout|setAttribute' \
+  | ugrep -vE '\.(origin|source)|isTrusted' > postmessage_suspects.txt
+```
+
+For each survivor, confirm a crafted `postMessage` from a controlled origin reaches the sink in
+the headless browser, then hand the page + payload to **`/xss`**. A listener that reads data into
+**no** sink is a (weaker) data-leak note, not an XSS. The filter is a heuristic (it can't see
+across nested-paren data or a guard defined outside the 400-char window) — treat its output as a
+priority queue, not a verdict.
 
 ---
 
@@ -325,8 +365,12 @@ xnLinkFinder -i js/ -sp target.tld -spo -sf target.tld -o endpoints.txt -op para
 # G. secrets
 ugrep -aErni -f .claude/skills/recon/secret-patterns.txt js/ > grep_hits.txt
 
-# H. postMessage handlers
-ugrep -anErh "addEventListener\s*\(\s*[\"'\`]message[\"'\`]|\bonmessage\s*=|\.postMessage\s*\(" js/
+# H. postMessage handlers + sender wildcard leaks + origin-check triage  → if sink reached, /xss
+ugrep -anE -f .claude/skills/recon/postmessage-handlers.txt js/
+ugrep -aonE "\.postMessage\s*\([^)]*,\s*[\"'\`]\*[\"'\`]|targetOrigin\s*:\s*[\"'\`]\*" js/
+ugrep -aohE ".{0,60}(addEventListener\(\s*[\"'\`]message|\bonmessage).{0,400}" js/ \
+  | head -c 8388608 \
+  | ugrep -E '\.data|innerHTML|eval|location\s*=|document\.write|srcdoc|setTimeout' | ugrep -vE '\.(origin|source)|isTrusted'
 
 # I. DOM sinks  → if source→sink flow, invoke /xss
 ugrep -aErni -f .claude/skills/recon/dom-sinks.txt js/ > dom_hits.txt

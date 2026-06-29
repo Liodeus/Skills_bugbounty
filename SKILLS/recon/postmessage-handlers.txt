@@ -1,0 +1,28 @@
+# postmessage-handlers.txt — ugrep -E patterns for postMessage and cross-origin message primitives in JS. Docs and triage: SKILL.md step H.
+# Heads up: ugrep joins every non-blank dash f line with the pipe character into one combined
+# regex, so hash comment lines are NOT skipped, they are parsed as regex too. Keep comments short
+# plain prose with no regex metacharacters. Blank lines are ignored.
+
+# A — message receivers: where cross-origin data enters the page context
+addEventListener\s*\(\s*["'`]message["'`]
+\bonmessage\b
+attachEvent\s*\(\s*["'`]onmessage["'`]
+new\s+MessageChannel\s*\(
+new\s+MessagePort\s*\(
+\.port[12]\s*\.\s*(postMessage|onmessage|start|close)
+\.ports\s*\[
+new\s+BroadcastChannel\s*\(
+new\s+SharedWorker\s*\(
+
+# B — message senders: postMessage calls; always read the targetOrigin second argument
+\.postMessage\s*\(
+\bpostMessage\s*\(
+webkitPostMessage\s*\(
+\.postMessage\s*\([^)]*,\s*["'`]\*["'`]
+targetOrigin\s*:\s*["'`]\*["'`]
+
+# C — origin and source validation markers: confirm a guard is present
+(event|e|msg|message|evt|d)\.(origin|source)
+\.origin\s*(===|!==|==|!=|&&|\|\|)
+\.origin\.(indexOf|includes|match|startsWith|endsWith)\s*\(
+\.isTrusted
