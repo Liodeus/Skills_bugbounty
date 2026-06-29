@@ -2,14 +2,20 @@
 #
 # install.sh — One-shot setup for the bug-bounty hunting toolkit.
 #
-# Installs/prepares everything hunt.sh needs:
-#   1. Verifies system prerequisites (node, npm, python3, mitmdump, claude)
+# Installs/prepares everything hunt.sh + the skills need:
+#   1. Verifies system prerequisites (node, npm, npx; soft: python3, go, claude)
 #   2. Installs Node dependencies (httpworkbench MCP + @playwright/mcp)
-#   3. Installs the Playwright Chromium browser
-#   4. Generates the playwright-chrome proxy configs (configs/userN.json)
+#   3. Installs the headless Playwright Chromium browser
+#   4. Generates the playwright-chrome headless configs (configs/userN.json)
+#   4b. Installs the hunting CLI tools the skills call:
+#       gau, xnLinkFinder, ugrep (/recon) · ffuf + SecLists (/ffuf-skill) ·
+#       sqlmap (/sql) · curl, jq, dig (HTTP/JSON/DNS used everywhere)
+#   5. Verifies the stdio MCP servers parse · 6. Installs the global `hunt` command
 #
-# Idempotent: safe to re-run. hunt.sh auto-invokes this on first run, but you
-# can also run it directly after cloning:  ./install.sh
+# Everything runs FULLY HEADLESS — no Burp/Caido. curl is the HTTP action surface,
+# headless Playwright the DOM engine. mitmdump is OPTIONAL (only for start.sh's
+# upstream-proxy helper). Idempotent: safe to re-run. hunt.sh auto-invokes this on
+# first run, but you can also run it directly after cloning:  ./install.sh
 #
 # Exit codes: 0 = ready, 1 = a hard prerequisite is missing.
 
@@ -43,10 +49,13 @@ done
 
 # Soft requirements (needed at hunt time, not for install) — warn with a hint.
 if command -v python3 >/dev/null 2>&1; then ok "python3 present"; else
-    warn "python3 not found — needed by the mitmproxy addon (proxy.py)."
+    warn "python3 not found — needed for xnLinkFinder, sqlmap, and the optional mitmproxy addon."
 fi
-if command -v mitmdump >/dev/null 2>&1; then ok "mitmdump present"; else
-    warn "mitmdump not found — install with:  sudo apt install -y mitmproxy   (or: pipx install mitmproxy)"
+if command -v go >/dev/null 2>&1; then ok "go present ($(go version 2>/dev/null | awk '{print $3}'))"; else
+    warn "go not found — required to build gau & ffuf. Install:  sudo apt install -y golang-go   (or https://go.dev/dl/)"
+fi
+if command -v mitmdump >/dev/null 2>&1; then ok "mitmdump present (optional)"; else
+    warn "mitmdump not found — OPTIONAL only (start.sh upstream-proxy helper). Everything runs headless without it.  sudo apt install -y mitmproxy"
 fi
 if command -v claude >/dev/null 2>&1; then ok "claude CLI present"; else
     warn "claude CLI not found — install from https://claude.com/claude-code (hunt.sh launches it at the end)."
@@ -100,24 +109,50 @@ fi
 echo
 
 # ---------------------------------------------------------------------------
-# 4b. Recon CLI tools used by the /recon skill (JS discovery + secret scanners).
+# 4b. Hunting CLI tools the skills call:
+#     gau, xnLinkFinder, ugrep (/recon) · ffuf + SecLists (/ffuf-skill) ·
+#     sqlmap (/sql) · curl, jq, dig (HTTP/JSON/DNS used across skills).
 #     Idempotent — each tool is skipped if already on PATH.
 # ---------------------------------------------------------------------------
-echo "🛰️  Installing recon tools for the /recon skill..."
+echo "🛰️  Installing hunting CLI tools for the skills..."
+
 # go install <bin> <module@version> — skip if the binary already resolves.
 go_install() {
     if command -v "$1" >/dev/null 2>&1; then ok "$1 present"; return 0; fi
-    if ! command -v go >/dev/null 2>&1; then warn "go not found — cannot install $1"; return 1; fi
+    if ! command -v go >/dev/null 2>&1; then warn "go not found — cannot install $1 (sudo apt install -y golang-go)"; return 1; fi
     echo "   • go install $2"
     if go install "$2" >/dev/null 2>&1; then ok "$1 installed"; else warn "failed to install $1 ($2)"; fi
 }
-# JS discovery / path extraction
-go_install gau     github.com/lc/gau/v2/cmd/gau@latest
-go_install katana  github.com/projectdiscovery/katana/cmd/katana@latest
-go_install subjs   github.com/lc/subjs@latest
-# Secret scanners
-go_install gitleaks github.com/zricethezav/gitleaks/v8@latest    # canonical module path
-go_install mantra   github.com/brosck/mantra@latest
+# Install a system package via the available manager — skip if the binary resolves.
+# $1=binary  $2=apt pkg  $3=brew pkg (defaults to $2)
+pkg_install() {
+    if command -v "$1" >/dev/null 2>&1; then ok "$1 present"; return 0; fi
+    local brew_pkg="${3:-$2}"
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "   • apt-get install -y $2"
+        sudo apt-get install -y "$2" >/dev/null 2>&1 && ok "$1 installed" || warn "failed to install $1 (apt: $2)"
+    elif command -v brew >/dev/null 2>&1; then
+        echo "   • brew install $brew_pkg"
+        brew install "$brew_pkg" >/dev/null 2>&1 && ok "$1 installed" || warn "failed to install $1 (brew: $brew_pkg)"
+    else
+        warn "$1 not found and no apt/brew — install '$2' manually"
+    fi
+}
+
+# Best-effort: ensure a Go toolchain so gau & ffuf can build.
+if ! command -v go >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+    echo "   • apt-get install -y golang-go (needed to build gau/ffuf)"
+    sudo apt-get install -y golang-go >/dev/null 2>&1 && ok "go installed" || warn "could not auto-install go — install Go then re-run"
+fi
+
+# Core HTTP / JSON / DNS utilities (curl = the headless HTTP action surface).
+pkg_install curl curl
+pkg_install jq   jq
+pkg_install dig  dnsutils bind
+
+# JS URL harvest + active fuzzing (Go tools).
+go_install gau   github.com/lc/gau/v2/cmd/gau@latest
+go_install ffuf  github.com/ffuf/ffuf/v2@latest
 
 # xnLinkFinder (Python) — endpoint/param extraction from JS
 if command -v xnLinkFinder >/dev/null 2>&1; then
@@ -130,18 +165,35 @@ else
     warn "pip3 not found — cannot install xnLinkFinder"
 fi
 
-# trufflehog — go install is blocked by replace directives; use the official script.
-if command -v trufflehog >/dev/null 2>&1; then
-    ok "trufflehog present"
-else
-    echo "   • trufflehog install script → \$HOME/go/bin"
-    if curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \
-        | sh -s -- -b "$HOME/go/bin" >/dev/null 2>&1; then
-        ok "trufflehog installed"
+# ugrep — fast drop-in grep used for path/secret/sink extraction over the js/ tree.
+pkg_install ugrep ugrep
+
+# sqlmap — SQL injection automation (/sql skill).
+pkg_install sqlmap sqlmap
+
+# SecLists wordlists — used by /ffuf-skill (parameter / directory / subdomain lists).
+SECLISTS_DIR="$(ls -d /usr/share/seclists /usr/share/wordlists/seclists /opt/SecLists "$HOME"/SecLists 2>/dev/null | head -1)"
+if [ -n "$SECLISTS_DIR" ]; then
+    ok "SecLists present ($SECLISTS_DIR)"
+elif command -v apt-get >/dev/null 2>&1; then
+    echo "   • apt-get install -y seclists"
+    if sudo apt-get install -y seclists >/dev/null 2>&1; then
+        ok "SecLists installed (/usr/share/seclists)"
     else
-        warn "failed to install trufflehog (see trufflesecurity/trufflehog install docs)"
+        warn "failed to install seclists (apt) — git clone https://github.com/danielmiessler/SecLists /opt/SecLists"
     fi
+else
+    warn "SecLists not found — git clone https://github.com/danielmiessler/SecLists /opt/SecLists"
 fi
+
+# Go-installed binaries (gau, ffuf) land in GOPATH/bin — make sure it's on PATH at hunt time.
+GOPATH_DIR="$(command -v go >/dev/null 2>&1 && go env GOPATH 2>/dev/null)"
+GOBIN_DIR="${GOPATH_DIR:-$HOME/go}/bin"
+case ":$PATH:" in
+    *":$GOBIN_DIR:"*) : ;;
+    *) warn "$GOBIN_DIR is not on PATH — gau/ffuf won't be found at hunt time. Add to ~/.zshrc & ~/.bashrc:"
+       echo "       export PATH=\"$GOBIN_DIR:\$PATH\"" ;;
+esac
 echo
 
 # ---------------------------------------------------------------------------
@@ -183,18 +235,21 @@ fi
 echo
 
 # ---------------------------------------------------------------------------
-# Summary — print the resolved @playwright/mcp cli path for ~/.mcp.json wiring.
+# Summary.
 # ---------------------------------------------------------------------------
 PW_CLI="$ROOT/node_modules/@playwright/mcp/cli.js"
 echo "────────────────────────────────────────────────────────"
 ok "Setup complete."
 if [ ${#MCP_NAMES[@]} -gt 0 ]; then
-    echo "   • stdio MCP servers  → registered per-target by hunt.sh (.mcp.json):"
-    echo "       ${MCP_NAMES[*]}"
+    echo "   • stdio MCP servers  → auto-wired into each workspace's .mcp.json by hunt.sh:"
+    echo "       ${MCP_NAMES[*]}  (+ playwright-user1/2/3, headless)"
 fi
 if [ -f "$PW_CLI" ]; then
     echo "   • Playwright MCP cli → $PW_CLI"
-    echo "     (point your ~/.mcp.json playwright-userN entries at this path)"
+else
+    warn "Playwright MCP cli missing ($PW_CLI) — re-run after a successful 'npm install'."
 fi
+echo "   • API keys (optional): export OATHNET_API_KEY=… (/credential-leaks),"
+echo "                          export PROFUNDIS_API_KEY=… (/profundis) before hunting."
 echo "   Next:  hunt <target_name>   (runnable from anywhere)"
 echo "────────────────────────────────────────────────────────"

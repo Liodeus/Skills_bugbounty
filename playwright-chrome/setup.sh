@@ -8,10 +8,10 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIGS="$DIR/configs"
 mkdir -p "$CONFIGS"
 
-BURP_PORT="${BURP_PORT:-8080}"
-
-declare -A COLORS=([1]="red" [2]="blue" [3]="green")
-declare -A PORTS=([1]="8081" [2]="8082" [3]="8083")
+# Three separate headless browser identities (independent userDataDirs) for multi-account
+# testing (IDOR / RBAC / cross-tenant). Fully headless, no proxy — everything runs direct.
+# (If you ever want to route through an OPTIONAL upstream proxy, run ./start.sh and add a
+#  "proxy" block to launchOptions below pointing at localhost:808N.)
 
 # To enable the opt-in DOM-XSS instrument (pre-load sink hooks + postMessage wiretap,
 # see SKILLS/xss/playwright-dom-debugging.md), add init/xss-instrument.js to the
@@ -25,7 +25,7 @@ for i in 1 2 3; do
   "browser": {
     "userDataDir": "/tmp/pw-chrome-user${i}",
     "launchOptions": {
-      "proxy": { "server": "http://localhost:${PORTS[$i]}" }
+      "headless": true
     },
     "contextOptions": {
       "ignoreHTTPSErrors": true
@@ -34,7 +34,7 @@ for i in 1 2 3; do
   }
 }
 EOF
-  echo "[+] configs/user${i}.json → proxy:${PORTS[$i]} (${COLORS[$i]})"
+  echo "[+] configs/user${i}.json → headless identity user${i}"
 done
 
 echo ""

@@ -50,7 +50,7 @@ Enveloppe : `{"data":[...], "total":N, "relation":"eq", "took":ms, "profundis_qu
 - Quotas compte (exemple tier 2) : `MaxQueryPerDay/Month:2700`, `MaxResultsPerDay/Month:5000`, `MaxSubdomainsEnumPerMonth:50000`, `MaxFiltersPerQuery:5`, `MaxTimeoutPerQuery:25`.
 - **Rate limit court** : header `x-ratelimit-limit:1` / `x-ratelimit-remaining` / `x-ratelimit-reset` → **~1 req par fenêtre** ⇒ espacer (~20-25s) ou boucle de retry sur `429`.
 - Params hosts/dns/vhosts complets : `raw_query, include, aggregate, results_per_page, page, order_by, direction, time_frame, max_favicons`. (⚠️ `aggregate:true` observé renvoyant `data:[]` → ne pas compter dessus pour dédupe ; dédupe côté client sur `host`.)
-- ⚠️ L'endpoint **stream via le proxy Burp ne passe pas** (SSE bufferisé → 000). Utiliser le mode JSON normal (sans `Accept: text/event-stream`).
+- ⚠️ Le **flux SSE (`Accept: text/event-stream`) peut renvoyer 000** (bufferisé). Utiliser le mode JSON normal sans `Accept: text/event-stream`.
 
 ---
 
@@ -63,14 +63,14 @@ Body : `domain` (requis), `estimate` (bool), `limit` (int).
 - **TOUJOURS** prévisualiser le compte avant de payer :
 ```bash
 # Étape 1 — ESTIMATE (~1 crédit) : combien ?
-curl --proxy http://127.0.0.1:8080 -s -X POST \
+curl -s -X POST \
   "https://api.profundis.io/api/v2/common/data/subdomains" \
   -H "X-API-KEY: $PROFUNDIS_API_KEY" -H "Content-Type: application/json" \
   -d '{"domain":"example.com","estimate":true,"limit":200}'
 # → coût réel = ceil(compte/100). Décider AVANT.
 
 # Étape 2 — ÉNUMÉRATION RÉELLE, BORNÉE par limit (sans estimate = facturé)
-curl --proxy http://127.0.0.1:8080 -s -X POST \
+curl -s -X POST \
   "https://api.profundis.io/api/v2/common/data/subdomains" \
   -H "X-API-KEY: $PROFUNDIS_API_KEY" -H "Content-Type: application/json" \
   -d '{"domain":"example.com","limit":100}'    # limit=100 → 1 crédit max
@@ -84,7 +84,7 @@ curl --proxy http://127.0.0.1:8080 -s -X POST \
 Body : `raw_query` (requis), `include` (`"all"` ou `"host,resolution,port,..."`), `aggregate` (bool), `results_per_page` (int), `page` (int). **1 crédit / appel (page).**
 
 ```bash
-curl --proxy http://127.0.0.1:8080 -s -X POST \
+curl -s -X POST \
   "https://api.profundis.io/api/v2/common/data/hosts" \
   -H "X-API-KEY: $PROFUNDIS_API_KEY" -H "content-type: application/json" \
   -d '{"raw_query":"host:*.example.com","include":"all","aggregate":false,"results_per_page":50,"page":1}'
@@ -122,7 +122,7 @@ Exemple complexe : `host:*.example.com AND (protocol:"https" OR status_code:"400
 Body identique (`raw_query`, `include`, `aggregate`, `results_per_page`, `page`). **1 crédit / appel (page).** Champs : `host`, `type` (A/AAAA/CNAME/MX/TXT/NS…), `resolution`.
 
 ```bash
-curl --proxy http://127.0.0.1:8080 -s -X POST \
+curl -s -X POST \
   "https://api.profundis.io/api/v2/common/data/dns" \
   -H "X-API-KEY: $PROFUNDIS_API_KEY" -H "content-type: application/json" \
   -d '{"raw_query":"host:*.example.com AND type:CNAME","include":"all","aggregate":false,"results_per_page":50,"page":1}'
@@ -144,7 +144,7 @@ curl --proxy http://127.0.0.1:8080 -s -X POST \
 | 429 | — | `Limit exceeded` (rate limit) | espacer les appels |
 
 ## Intégration recon
-- Complément d'OathNet (`oathnet_search_subdomains`) et de la recon manuelle ; ajouter les actifs trouvés au **scope Burp**.
+- Complément d'OathNet (`oathnet_search_subdomains`) et de la recon manuelle ; ajouter les actifs trouvés à la **liste de cibles in-scope**.
 - Pipeline conseillé : `dns`/`hosts` (ciblé, 1 crédit) pour explorer/filtrer → `subdomains` (estimate d'abord) seulement si on veut la liste exhaustive.
 
 ## ⚠️ Garde-fous wallet (résumé)

@@ -1,15 +1,16 @@
 """
-mitmproxy script - injects X-PwnFox-Color header and strips HTTP/2 forbidden headers.
+mitmproxy script - tags requests with an identity header and strips HTTP/2 forbidden headers.
+Only used by the OPTIONAL start.sh upstream-proxy helper; not part of the default headless flow.
 
 Usage (via mitmdump):
-    mitmdump -p 8081 --mode upstream:http://localhost:8080 --ssl-insecure \
-             -s proxy.py --set color=red
+    mitmdump -p 8081 --ssl-insecure -s proxy.py --set color=user1
+    # add --mode upstream:http://localhost:8090 only if you run your own upstream proxy
 """
 
 import sys
 from mitmproxy import http, ctx
 
-# Headers forbidden in HTTP/2 (cause 502 when forwarded to H2 upstreams like Burp)
+# Headers forbidden in HTTP/2 (cause 502 when forwarded to an H2 upstream)
 H2_FORBIDDEN = {"connection", "keep-alive", "transfer-encoding", "upgrade", "proxy-connection"}
 
 COLOR = "red"

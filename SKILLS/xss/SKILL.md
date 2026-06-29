@@ -71,7 +71,7 @@ For DOM XSS: it's all about source → sink. Find the source (`location`, `postM
 ### Step 1: Reflected — input mapping
 * Every parameter in URL, body, headers
 * Submit a unique marker per input: `xss12345`, `xss12346`, ...
-* Crawl/spider the app, then grep all responses (HTML, JSON, JS) for each marker
+* Crawl/spider the app, then `ugrep` all responses (HTML, JSON, JS) for each marker
 * For each reflection: HTML body, attribute, JS string, JSON value (does it get rendered into HTML?), CSS, URL
 
 ### Step 2: Context analysis
@@ -92,18 +92,18 @@ Once you've found a reflection, probe what's filtered:
 6. Check for case-sensitivity, length cap, null-byte truncation
 
 ### Step 4: DOM XSS
-* Pull every JS file
-* Grep for sinks: `innerHTML`, `outerHTML`, `document.write`, `eval`, `setTimeout` with string, `Function(`, `setAttribute('on...`)`, `location =`, `srcdoc =`
-* Grep for sources: `location.hash`, `location.search`, `document.referrer`, `window.name`, `postMessage`, `localStorage`, `document.cookie`, `URLSearchParams`
+* Pull every JS file (or reuse `/recon`'s saved `js/` tree)
+* `ugrep` for sinks: `innerHTML`, `outerHTML`, `document.write`, `eval`, `setTimeout` with string, `Function(`, `setAttribute('on...`)`, `location =`, `srcdoc =`
+* `ugrep` for sources: `location.hash`, `location.search`, `document.referrer`, `window.name`, `postMessage`, `localStorage`, `document.cookie`, `URLSearchParams`
 * For each sink, trace backward — does data flow from a source to here without sanitization?
-* Tools: DOM Invader (Burp), Static Analysis with `ast-grep`, manual code review
+* Tooling: `ugrep -f .claude/skills/recon/dom-sinks.txt js/` (the curated sink+source set ships with `/recon`), then the headless DOM debugger below; manual code review
 
-**Static grep gets you candidates; the live browser confirms the flow.** When you have a
+**Static `ugrep` gets you candidates; the live browser confirms the flow.** When you have a
 JS-rendered page, `postMessage`/`addEventListener('message')` handlers, or want to *prove* a
-source reaches a sink, drive Playwright (CLAUDE.md Mode 3) and read
+source reaches a sink, drive **headless Playwright** (CLAUDE.md Mode 3) and read
 **[`playwright-dom-debugging.md`](playwright-dom-debugging.md)** — copy-paste `browser_evaluate`
 snippets that hook sinks (with stack traces), wiretap + fuzz `postMessage`, do live
-source→sink taint tracing, and capture CSP violations. Use it the moment grep finds a sink
+source→sink taint tracing, and capture CSP violations. Use it the moment `ugrep` finds a sink
 or a message handler and you can't tell from the HTTP response whether the flow is real.
 
 ### Step 5: Stored

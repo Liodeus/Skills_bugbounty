@@ -16,6 +16,26 @@ Every modern app has 5+ SSRF surfaces and you'll miss 4 of them. They live in:
 
 The first kind is obvious. The second kind is where the wins live. Always look for **headless browser chains**: HTML/PDF/screenshot rendering = JS execution server-side = SSRF + more.
 
+## OOB interaction server — HTTPWorkbench MCP
+
+Blind SSRF is the common case: the server fetches your URL but you never see the response. You need an **out-of-band callback catcher** — and you have one built in, the **HTTPWorkbench MCP**. It's the SSRF equivalent of an interactsh / OOB-interaction server: spin up an instance, plant its URL in the candidate parameter, and watch the server call back. This is the primary instrument for confirming blind SSRF — use it instead of any generic "collaborator".
+
+| Tool | Use |
+|---|---|
+| `httpworkbench_create_instance` | Spin up an instance serving a custom **raw HTTP response**. Returns an **instance ID** + callback URL (`<id>.instances.httpworkbench.com`, both HTTP and HTTPS). |
+| `httpworkbench_create_ssrf_payload` | Shortcut: pre-configured SSRF instance. `payload_type` ∈ `html` `xml` `json` `text` `redirect` `cors` (+ optional `custom_content`). |
+| `httpworkbench_update_instance` | Change the served response mid-test (e.g. swap to a 301 redirect once the fetch is confirmed). |
+| `httpworkbench_get_logs` | Pull every request the instance received — **source IP, User-Agent, headers, method, path**. Your proof *and* fetcher fingerprint. |
+| `httpworkbench_poll_logs` | Block up to `timeout`s (default 30, `interval` 2) waiting for a new callback — call it right after planting the payload. |
+
+**Default blind-SSRF loop:**
+1. `httpworkbench_create_ssrf_payload payload_type=html` (or `create_instance` for full control) → note the callback URL + instance ID.
+2. Plant the **HTTPS** callback URL in the candidate parameter (webhook, avatar, import-from-URL, …) and fire the request with `curl`.
+3. `httpworkbench_poll_logs instance_id=<id>` → a request landing = SSRF **confirmed**. Read the UA/headers (via `get_logs`) to identify the fetcher (curl, Go-http-client, Java, HeadlessChrome…) and pick which tricks below apply.
+4. To bypass an allowlist that validates your domain once then follows redirects, `httpworkbench_update_instance` (or `create_ssrf_payload payload_type=redirect`) so the instance answers `301 Location: http://169.254.169.254/latest/meta-data/…` — re-trigger and check whether the metadata body comes back.
+
+Always finish a test with `httpworkbench_get_logs` to capture the callback as PoC evidence.
+
 ## SSRF Chains (from real reports)
 
 ### Chain 1: AWS metadata → IAM creds → S3/cluster access
@@ -86,9 +106,9 @@ Different libraries parse URLs differently. Common bypasses:
 * Hidden: SAML metadata, OIDC discovery, federation endpoints, software updates, license check
 
 ### Step 2: For each input, run the test ladder
-1. Submit `https://your-collaborator.example.com/PATH` — does the server fetch?
-2. Capture User-Agent, source IP, headers — fingerprints the fetcher (curl, wget, Java, Go-http-client, Headless Chrome)
-3. Test redirects: collaborator returns 301→`http://169.254.169.254/...` — does it follow?
+1. Submit the **HTTPWorkbench** instance URL (`https://<id>.instances.httpworkbench.com/PATH`), then `httpworkbench_poll_logs` — does the server fetch?
+2. `httpworkbench_get_logs` → capture User-Agent, source IP, headers — fingerprints the fetcher (curl, wget, Java, Go-http-client, Headless Chrome)
+3. Test redirects: set the instance to return 301→`http://169.254.169.254/...` (`httpworkbench_update_instance`, or `create_ssrf_payload payload_type=redirect`) — does it follow?
 4. Test cross-protocol redirect: HTTPS→HTTP, HTTP→file://, HTTP→gopher://
 5. Test internal IP directly: `http://169.254.169.254/`, `http://localhost/`, `http://127.0.0.1:port/`
 6. Test parser bypasses (above)
@@ -113,7 +133,7 @@ The User-Agent tells you the library — that tells you what tricks work:
 * Show the request that triggered the SSRF
 * Show the response containing internal data (metadata, internal endpoint body, port-scan timing)
 * For credentials: show `aws sts get-caller-identity` (or equiv) — DO NOT use the credentials beyond identity verification
-* Categorize: blind (only collaborator hit), semi-blind (timing/error), full read SSRF
+* Categorize: blind (only the HTTPWorkbench callback fires), semi-blind (timing/error), full read SSRF
 * Document which protocols / IPs are reachable
 
 ## Key Considerations

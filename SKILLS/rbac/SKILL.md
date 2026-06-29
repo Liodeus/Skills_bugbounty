@@ -66,7 +66,7 @@ RBAC bugs almost always come from **enforcement happening at the wrong layer**:
 Get one account per role: `viewer`, `editor`, `admin`, `owner`, `billing`, `support`. If self-signup only gives one role, ask the program for higher roles or work with what you have plus inference (admin = inverse of low-priv).
 
 ### Step 2: Build the endpoint inventory
-* Walk the app as the highest role you have, capturing every request (Burp/Caido)
+* Walk the app as the highest role you have (headless), saving every request/response to your working files
 * Walk again as each lower role
 * Mine JS bundles for endpoints not exposed in UI to your role
 * GraphQL: introspect, list all operations

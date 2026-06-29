@@ -159,11 +159,10 @@ ffuf --request req.txt -w user-ids.txt -ac -mc 200 -mr '"email"' -o graphql_resu
 
 ## How to Capture Your Own Request
 
-### Method 1: Burp Suite
-1. Intercept the authenticated request in Burp
-2. Right-click → "Copy to file"
-3. Save as `req.txt`
-4. Edit to replace the value you want to fuzz with `FUZZ`
+### Method 1: Headless browser / saved request
+1. Drive the target with headless Playwright (or reuse the `/recon` walk) and capture the authenticated request
+2. Save the raw request as `req.txt` (request line, headers, cookies, body)
+3. Edit to replace the value you want to fuzz with `FUZZ`
 
 ### Method 2: Browser DevTools
 1. Open DevTools (F12) → Network tab

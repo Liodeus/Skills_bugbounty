@@ -1,0 +1,98 @@
+# dom-sinks.txt — ugrep -E regex set for DOM-XSS sinks + postMessage handlers in JS bundles.
+# Usage:  ugrep -aErni --include='*.js' -f dom-sinks.txt js/
+#         ugrep is a drop-in for grep; -a text, -r recurse, -n line numbers, -i case-insensitive.
+# Lines starting with '#' and blank lines are ignored by ugrep -f, so they serve as comments.
+#
+# Triage note: a hit is a SINK, not a bug. A sink is only exploitable if user-controlled
+# input reaches it without sanitisation. For every cluster of hits, trace the source
+# (location.hash/search, document.referrer, postMessage e.data, name, URL params) to the
+# sink in the headless browser debugger, then hand the page + payload to /xss.
+
+# --- HTML injection (write markup into the DOM) ---
+\.innerHTML\s*[=+]
+\.outerHTML\s*[=+]
+insertAdjacentHTML\s*\(
+document\.write(ln)?\s*\(
+\.srcdoc\s*=
+dangerouslySetInnerHTML
+\bv-html\b
+createContextualFragment\s*\(
+new\s+DOMParser\s*\(
+\.parseFromString\s*\(
+\.setHTML\s*\(
+\.innerHTML\b
+\.insertAdjacentText\s*\(
+
+# --- Code execution ---
+\beval\s*\(
+new\s+Function\s*\(
+\bFunction\s*\(\s*["'`]
+\.constructor\s*\(\s*["'`]
+\bsetTimeout\s*\(\s*["'`]
+\bsetInterval\s*\(\s*["'`]
+\bsetImmediate\s*\(\s*["'`]
+\bexecScript\s*\(
+\bexecCommand\s*\(
+\bimport\s*\(
+importScripts\s*\(
+vm\.runIn(New|This)?Context\s*\(
+WebAssembly\.(compile|instantiate)\s*\(
+
+# --- Script / worker / resource loading (script-src injection) ---
+createElement\s*\(\s*["'`]script["'`]
+\.src\s*=\s*
+\.text\s*=\s*
+new\s+Worker\s*\(
+new\s+SharedWorker\s*\(
+serviceWorker\.register\s*\(
+\.register\s*\(\s*["'`][^"'`]*\.js
+
+# --- Navigation / URL sinks (open-redirect + javascript: XSS) ---
+location\s*=\s*
+\.href\s*=
+location\.(replace|assign)\s*\(
+window\.open\s*\(
+\.action\s*=\s*
+\.formAction\s*=
+navigation\.navigate\s*\(
+\.ping\s*=
+setAttribute\s*\(\s*["'`](href|src|srcdoc|formaction|action|xlink:href|data|poster|background|ping)["'`]
+\.(href|src|srcdoc|formaction|action)\s*=
+
+# --- jQuery / library DOM sinks ---
+\$\s*\([^)]*\)\.(html|append|prepend|after|before|wrap|wrapInner|wrapAll|replaceWith|replaceAll|appendTo|prependTo|insertAfter|insertBefore|add|load)\s*\(
+\$\.parseHTML\s*\(
+jQuery\.parseHTML\s*\(
+jQuery\.globalEval\s*\(
+\.attr\s*\(\s*["'`](href|src)["'`]
+\.prop\s*\(\s*["'`](href|src)["'`]
+
+# --- Framework sanitizer bypass (Angular / AngularJS / Vue / Trusted Types) ---
+bypassSecurityTrust(Html|Script|Style|Url|ResourceUrl)\s*\(
+\$sce\.(trustAs|trustAsHtml|trustAsJs|trustAsResourceUrl|trustAsCss)\s*\(
+ng-bind-html(-unsafe)?
+\[innerHTML\]
+\[src\]
+\$compile\s*\(
+\.compile\s*\(
+trustedTypes\.createPolicy\s*\(
+TrustedHTML
+_\.template\s*\(
+Handlebars\.compile\s*\(
+
+# --- Source-side flow markers (user-controlled inputs that feed the sinks above) ---
+location\.(hash|search|pathname|href|host|hostname|protocol)
+document\.(URL|documentURI|baseURI|referrer|cookie|domain)
+window\.name
+history\.state
+URLSearchParams
+\.(getParameter|getParameterByName)\s*\(
+searchParams\.get\s*\(
+(local|session)Storage\.getItem\s*\(
+\.postMessage\s*\(
+\bnew\s+URL\s*\(
+
+# --- postMessage handlers (origin-less listeners = cross-origin DOM XSS / data theft) ---
+addEventListener\s*\(\s*["'`]message["'`]
+\bonmessage\s*=
+attachEvent\s*\(\s*["'`]onmessage["'`]

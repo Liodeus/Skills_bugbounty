@@ -6,9 +6,9 @@
 
 ## Problem
 
-The `/xss` skill's DOM-XSS step (Step 4) was static-analysis only: "grep for sinks,
-grep for sources, use DOM Invader/ast-grep." The toolkit ships a Playwright MCP (3
-Caido-proxied browser instances) and CLAUDE.md defines Playwright Mode 3 (DOM Hunter)
+The `/xss` skill's DOM-XSS step (Step 4) was static-analysis only: "ugrep for sinks,
+ugrep for sources." The toolkit ships a Playwright MCP (3 fully-headless browser
+identities) and CLAUDE.md defines Playwright Mode 3 (DOM Hunter)
 and Mode 2 (XSS Validator) — but the skill gave the AI no concrete way to *use* the
 live browser to find sinks or test postMessage handlers. The AI could open a page but
 not instrument it.
@@ -90,4 +90,4 @@ All artifacts validated before commit:
 ## Out of scope (YAGNI)
 - No changes to `bxss` (can link later if the live render-confirm proves useful there).
 - No auto-enabling of the init script or auto-restart of the MCP.
-- No exfiltration/PoC-hosting helper — the doc points back to Caido + report skill for that.
+- No exfiltration/PoC-hosting helper — the doc points back to `curl` + the report skill for that.

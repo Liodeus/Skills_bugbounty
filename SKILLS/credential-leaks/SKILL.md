@@ -58,7 +58,7 @@ The vanilla wrapper used to return only 6 hostnames extracted as a side effect o
 If results suddenly drop, re-test with curl directly:
 
 ```bash
-curl -sk -x http://127.0.0.1:8080 \
+curl -sk \
   -H "x-api-key: $OATHNET_API_KEY" \
   "https://oathnet.org/api/service/v2/stealer/subdomain?domain=<target>" \
   | jq -r '.data.subdomains[]'
@@ -194,7 +194,7 @@ Most apps accept this fallback so legitimate users with adblock / corporate prox
 Signature : tiny HTML body (180–250 bytes) with `Your support ID is: <numeric>`. Often a combination of:
 
 - Geo-allowlist (only target country IP ranges)
-- IP reputation (Burp egress IPs → blocked)
+- IP reputation (datacenter / cloud egress IPs → blocked)
 - TLS/JA3 fingerprint
 - Path-based blocking on `/auth`, `/login`, `/admin`
 
@@ -208,15 +208,15 @@ Right move: document, don't fight the WAF. Note that the surface is unreachable 
 
 ### Cloudflare / Akamai bot management
 
-If a real browser is genuinely required (rare for cred testing), use the local Playwright MCPs:
+If a real browser is genuinely required (rare for cred testing), use the local headless Playwright MCPs (one per identity):
 
 ```
-mcp__playwright-user1__*      (red header tag in Burp)
-mcp__playwright-user2__*      (blue)
-mcp__playwright-user3__*      (green)
+mcp__playwright-user1__*
+mcp__playwright-user2__*
+mcp__playwright-user3__*
 ```
 
-Each runs through `mitmdump` → Burp on 8080. Use only if HTTP-level testing is blocked.
+Each runs fully headless. Use only if HTTP-level testing is blocked.
 
 ---
 

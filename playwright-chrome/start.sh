@@ -1,32 +1,33 @@
 #!/bin/bash
-# Starts 3 mitmproxy instances that inject X-PwnFox-Color and forward to Burp Suite.
+# OPTIONAL upstream proxy — NOT needed for normal use.
+# The Playwright MCP identities run fully headless and direct (no proxy) by default; this
+# script only matters if you deliberately want to route the 3 identities through an external
+# upstream proxy (e.g. an mitmproxy/ZAP recorder you run yourself). Off unless you start it
+# AND add a "proxy" block to configs/userN.json. Default = no proxy, fully direct and headless.
 #
-# Architecture: Chrome (user N) → mitmdump:808N → Burp:8080 → target
+# Architecture (when used): Chrome (user N) → mitmdump:808N → optional UPSTREAM → target
 #
 # Usage:
-#   ./start.sh             # Burp on default localhost:8080
-#   BURP_PORT=9090 ./start.sh
+#   UPSTREAM=http://localhost:8090 ./start.sh     # forward to an upstream you run
+#   ./start.sh                                     # no upstream → mitmdump passes through direct
 
 set -e
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-BURP_HOST="${BURP_HOST:-localhost}"
-BURP_PORT="${BURP_PORT:-8080}"
-UPSTREAM="http://${BURP_HOST}:${BURP_PORT}"
+UPSTREAM="${UPSTREAM:-}"
 
-declare -A COLORS=([1]="red" [2]="blue" [3]="green")
 PIDS=()
 
 for i in 1 2 3; do
   PORT=$((8080 + i))
-  mitmdump -p "$PORT" \
-    --mode "upstream:${UPSTREAM}" \
-    --ssl-insecure \
-    -s "$DIR/proxy.py" \
-    --set "color=${COLORS[$i]}" \
-    --quiet &
+  if [ -n "$UPSTREAM" ]; then
+    mitmdump -p "$PORT" --mode "upstream:${UPSTREAM}" --ssl-insecure -s "$DIR/proxy.py" --set "color=user${i}" --quiet &
+    echo "[+] user${i}  →  mitmdump:${PORT}  →  upstream:${UPSTREAM}"
+  else
+    mitmdump -p "$PORT" --ssl-insecure -s "$DIR/proxy.py" --set "color=user${i}" --quiet &
+    echo "[+] user${i}  →  mitmdump:${PORT}  →  direct"
+  fi
   PIDS+=($!)
-  echo "[+] user${i} (${COLORS[$i]})  →  mitmdump:${PORT}  →  Burp:${BURP_PORT}"
 done
 
 echo ""

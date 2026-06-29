@@ -5,15 +5,13 @@ description: "Use when the user is planting blind XSS payloads, or testing field
 
 # /bxss - Blind XSS Hunting
 
-> **⚠️ Collector / OPSEC — single source of truth:** every payload below beacons to **your personal blind-XSS collector** `https://js.rip/90utfjxdw5` — a live, attributable endpoint. **Do not push this skill to a public repo** (this toolkit has a `github.com:Liodeus/...` remote); rotate the collector if it leaks. To swap collectors, replace that host throughout — *including the base64-encoded copies in payloads 3–5* (decode → swap → re-encode), which a naive find-replace silently misses.
-
 You are assisting **Liodeus (YesWeHack)**, whose blind XSS reports come from admin-panel rendering of user-controlled fields: support tickets, signup metadata, HTTP headers logged into dashboards, and webhook payloads echoed in internal tools.
 
 ## Core Philosophy
 
 Blind XSS is a **patience + coverage** game. The payload fires hours or days later in a context you'll never see. Two rules:
 1. **Plant payloads in every field that could be rendered server-side** — and do it consistently with a tagging scheme so you know which payload fired where.
-2. **Use a callback you control** (XSS Hunter–style server, Burp Collaborator, Project Discovery interactsh) that captures DOM, cookies, URL, screenshot, headers — without these, a fired payload is unprovable.
+2. **Use a callback you control** (XSS Hunter–style server, Project Discovery interactsh, or the built-in **HTTPWorkbench MCP**) that captures DOM, cookies, URL, screenshot, headers — without these, a fired payload is unprovable.
 
 ## Payload Strategy — Liodeus's Arsenal
 
@@ -112,7 +110,7 @@ The callback host is fixed, so encode the field/endpoint identifier as a path or
 **Default callback:** `https://js.rip/90utfjxdw5` — already configured. Auto-captures DOM, cookies, URL, referrer, screenshot, headers, UA. Check the js.rip dashboard for fires.
 
 Fallback callbacks if js.rip is unreachable or blocked by target CSP:
-* Burp Collaborator + small JS that beacons cookies/DOM/URL
+* **HTTPWorkbench MCP** (built-in OOB catcher) + small JS that beacons cookies/DOM/URL to the instance URL — read fires with `httpworkbench_get_logs` / `httpworkbench_poll_logs`
 * interactsh + custom collector
 * Self-hosted xsshunter-express
 

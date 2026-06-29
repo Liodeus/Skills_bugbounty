@@ -12,7 +12,7 @@ You are assisting **Liodeus (YesWeHack)**. WAF bypass is a **technique**, not a 
 * **No underlying vuln = no report.** If you bypass the WAF but nothing fires server-side, log `[DEAD-END]` and move on.
 * **WAF bypass alone is informative.** Programs close standalone "I bypassed Cloudflare" reports. Always chain to a confirmed vuln.
 * **Try infrastructure bypass before payload obfuscation.** A reachable origin makes the WAF irrelevant. Don't burn 50 encoding variants when a `staging.target.com` lookup solves it.
-* **Iterate in Caido, not curl.** Every variant lands in the project history — replayable, comparable, audit-trailed.
+* **Iterate headless with `curl`.** Save each variant's request + response to a file so they stay replayable and comparable — those files are your audit trail.
 
 ## Always-ignore on its own
 * "I bypassed the WAF" reports without a confirmed underlying vuln behind it.
@@ -21,7 +21,7 @@ You are assisting **Liodeus (YesWeHack)**. WAF bypass is a **technique**, not a 
 
 ## Tooling
 
-Use the **Caido MCP** for iterative payload testing — every variant lands in the project history, side-by-side replayable. Don't curl variants out-of-band; you'll lose the audit trail. If a payload needs JS-rendered context (DOM XSS through a CDN WAF), drive **Playwright** so the browser routes through Caido.
+Everything is headless. Iterate payloads with **`curl`**, saving each variant's request + response to your working files so they're side-by-side comparable (that's the audit trail — don't fire requests whose result you don't keep). Use **`ugrep`** to diff/scan responses for the block signature vs. a pass. If a payload needs JS-rendered context (DOM XSS through a CDN WAF), drive **headless Playwright** to render and confirm.
 
 ## Quick Reference
 
@@ -82,7 +82,7 @@ If origin is reachable → test underlying vuln there. Document the infra bypass
 
 ### Phase 1 — Detect the WAF
 
-Send a noisy payload through Caido:
+Send a noisy payload with `curl`:
 ```
 ?id=' OR 1=1--
 ```
@@ -97,7 +97,7 @@ Check headers, cookies, error body. Match against the detection table above. **S
 
 ### Phase 3 — Apply bypass techniques
 
-Apply in roughly this order. Iterate in the Caido replay tab so every variant is preserved and comparable.
+Apply in roughly this order. Iterate with `curl`, saving each variant's response so every one is preserved and comparable.
 
 #### 3.1 URL Encoding
 ```

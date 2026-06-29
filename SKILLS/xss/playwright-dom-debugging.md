@@ -1,13 +1,15 @@
 # Playwright DOM-XSS Debugging — Live Sink & postMessage Hunting
 
-Read this when `/xss` Step 4 (DOM XSS) needs more than grep — when you want the
+Read this when `/xss` Step 4 (DOM XSS) needs more than `ugrep` — when you want the
 **live browser** to tell you which sink fires, with what data, from which code, and
 whether a `postMessage` handler is exploitable. This is the practical companion to
 **CLAUDE.md → Playwright Mode 3 (DOM Hunter)** and **Mode 2 (XSS Validator)**.
 
-All browser traffic proxies through Caido automatically. These techniques are for
-*finding and confirming* the client-side flow; the moment you have a PoC URL/request,
-hand it back to Caido.
+Playwright runs **fully headless** — no visible window. Everything here works headless:
+`browser_evaluate` snippets, `browser_console_messages`, and `browser_take_screenshot` all
+function without a display. These techniques are for *finding and confirming* the client-side
+flow; the moment you have a PoC URL/request, save the artifacts (the `window.__xss` dump, console
+log, screenshot) to your working files and assemble the PoC with `curl`.
 
 ## The one rule about timing
 
@@ -156,7 +158,7 @@ effective origin check**. That is a DOM-XSS via postMessage.
 **Real-target note:** to attack a handler that *does* check `e.origin` against your origin,
 you must post from an allowed origin. Confirm the bug here, then build the real PoC as an
 attacker-hosted page that iframes the target and posts the payload — that page is the report
-artifact (host it, or hand the HTML to Caido/the report).
+artifact (host it, or save the HTML alongside the report).
 
 **Interpret:**
 - Hit on a structured shape (`{type,url,...}`) → the handler trusts `e.data.url`/`.html`.
@@ -226,9 +228,12 @@ violations tell you a sink *fired* but was blocked (still reportable, often bypa
 4. Read `window.__xss.taint` → confirmed flows. Read `.sinks` for near-misses.
 5. If CSP blocked execution, check `.csp` and pivot to a CSP bypass.
 6. **Confirm execution** (Mode 2 / XSS Validator): craft the context-fitting payload, fire it,
-   screenshot the `alert`/callback. For postMessage, the PoC is an attacker page that frames
-   the target and posts the payload.
-7. **Back to Caido** to assemble the PoC request/URL chain for the report. Disable the init
+   screenshot the proof. **Headless caveat:** a native `alert()` dialog isn't painted in a
+   headless screenshot (Playwright auto-dismisses it), so prove execution with a *visible DOM
+   effect* instead — `document.title='XSS-<marker>'`, write a marker into the page, a
+   `console.log`/network beacon, or a `fetch()` to your HTTPWorkbench instance. Screenshot that.
+   For postMessage, the PoC is an attacker page that frames the target and posts the payload.
+7. **Back to `curl`** to assemble the PoC request/URL chain for the report. Disable the init
    script if you enabled it.
 
 ## Gotchas

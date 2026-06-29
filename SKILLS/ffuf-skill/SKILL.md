@@ -185,7 +185,7 @@ ffuf -w /path/to/wordlist.txt -u https://target.com/FUZZ -s | tee results.txt
 This is one of the most powerful features of ffuf, especially for authenticated requests with complex headers, cookies, or tokens.
 
 **Workflow:**
-1. Capture a full authenticated request (from Burp Suite, browser DevTools, etc.)
+1. Capture a full authenticated request (headless browser, a saved request file, browser DevTools, etc.)
 2. Save it to a file (e.g., `req.txt`)
 3. Replace the value you want to fuzz with the `FUZZ` keyword
 4. Use the `--request` flag
@@ -229,16 +229,16 @@ ffuf --request req.txt -w user_ids.txt -ac -mc 200 -o results.json
 ffuf --request req.txt -w endpoints.txt:ENDPOINT -w ids.txt:ID -mode pitchfork -ac
 ```
 
-### Proxy Usage
+### Output & proxy
 ```bash
-# HTTP proxy (useful for Burp Suite)
-ffuf -w /path/to/wordlist.txt -u https://target.com/FUZZ -x http://127.0.0.1:8080
+# Headless default: save full results to a file (your record / system of truth)
+ffuf -w /path/to/wordlist.txt -u https://target.com/FUZZ -ac -o results.json
+
+# Optional: route through an upstream proxy only if you run one
+ffuf -w /path/to/wordlist.txt -u https://target.com/FUZZ -x http://127.0.0.1:8081
 
 # SOCKS5 proxy
 ffuf -w /path/to/wordlist.txt -u https://target.com/FUZZ -x socks5://127.0.0.1:1080
-
-# Replay matched requests through proxy
-ffuf -w /path/to/wordlist.txt -u https://target.com/FUZZ -replay-proxy http://127.0.0.1:8080
 ```
 
 ### Cookie and Authentication
@@ -293,7 +293,7 @@ ffuf -w wordlist.txt -u https://target.com/FUZZ -ac
 ### 2. Use Raw Requests for Authentication
 Don't struggle with command-line flags for complex auth. Capture the full request and use `--request`:
 ```bash
-# 1. Capture authenticated request from Burp/DevTools
+# 1. Capture authenticated request (headless browser / saved request file / DevTools)
 # 2. Save to req.txt with FUZZ keyword in place
 # 3. Run with -ac
 ffuf --request req.txt -w wordlist.txt -ac -o results.json
@@ -439,7 +439,7 @@ status = "200-299,301,302,307,401,403,405,500"
 | Save Output | Add `-o results.json` |
 | Verbose | Add `-c -v` |
 | Recursion | Add `-recursion -recursion-depth 2` |
-| Through Proxy | Add `-x http://127.0.0.1:8080` |
+| Through Proxy (optional upstream) | Add `-x http://127.0.0.1:8081` |
 
 ## Additional Resources
 

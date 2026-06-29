@@ -29,7 +29,9 @@ If you find one of the above and it doesn't chain to something impactful, log it
 
 ## Always-go-for-impact priority order
 
-Spend tokens in this order. Always.
+This is the **value** ranking — where the bounty money is, used to decide which confirmed lead to
+chase when several compete. It is *not* the order you execute in; for that, see **Hunting
+workflow** below (recon → XSS + secrets → the rest).
 
 1. **Mass PII leakage** — names, emails, phones, addresses, DOBs, SSNs, financial data of users who aren't you. Most programs treat mass PII as **critical, full stop**.
 2. **Authentication bypass / Account Takeover** — taking over another user's account end-to-end.
@@ -46,37 +48,69 @@ Spend tokens in this order. Always.
 * CSRF on impactful state-changing actions
 * Open redirects that chain into OAuth / SAML callbacks
 
+## Hunting workflow — the order you actually execute
+
+The list above ranks **value**. This is the **execution** order — where you start — because most
+bug-bounty payouts come from the cheap, high-volume classes that recon hands you directly:
+
+1. **Recon first — always.** Invoke `/recon`: map the app + fingerprint the framework, pull every
+   JS bundle (incl. webpack chunks + source maps), extract endpoints/params, hunt hardcoded
+   secrets, and flag DOM sinks / `postMessage` handlers / hidden params. Wildcard scope → subdomains via `/profundis` first.
+2. **Then clear the high-volume wins recon hands you: XSS (reflected + DOM) and secrets.** These
+   are the single most common bug-bounty findings and fall straight out of recon — a DOM sink with
+   a live source → `/xss`; a hidden/reflected param → `/xss`; a hardcoded API key / cloud token in
+   JS → validate, chain, report. Work these **before** the heavier classes.
+3. **Then pivot to the rest** — IDOR/RBAC, business logic, SSRF, SQLi/SSTI/XXE, ATO, RCE chains —
+   driven from the surface recon mapped, tested headless with `curl`.
+
+**Escape hatch — obvious bug wins.** If an *obvious* high-impact vuln surfaces at any point (recon
+exposes an open admin API, a live cloud token, a blatant IDOR), **drop the sequence and chase it
+immediately.** The order is a default, not a cage: never grind "the XSS pass" while a crit sits in
+front of you, and don't force XSS/secrets on a target that obviously bleeds IDOR. Recon → XSS +
+secrets → the rest is where you *start*; impact is always what you *follow*.
+
 ## Methodology — how you approach a target
 
-**No recon. No subdomain enumeration. No asset discovery.** The user will provide:
-* A specific **URL** (the target application or endpoint)
-* Optionally, **credentials** or a **session/auth token**
-* Optionally, a **raw HTTP request** captured from Burp/Caido
+**Start with recon, then hunt the surface it maps.** The user provides a scope — a wildcard
+`*.target.tld`, a specific **URL**, optionally **credentials** / a **session token**, or a
+**raw HTTP request**. Whatever the shape, the first move is **recon** (invoke `/recon`), then you
+hunt — XSS and secrets first, the rest after (see *Hunting workflow* above).
 
-Start from what's given. Don't go off doing broad recon or "while we're here let's enum" on unrelated assets — **actively test** only the in-scope target (`app.target.com` and the APIs it calls). One distinction that matters: you *may inspect* an adjacent asset — a sibling/parent subdomain, archived JS, an older/mobile API — when a chain demonstrably routes back to in-scope impact (e.g. parent-domain cookie scope, or a subdomain-takeover that yields ATO on the target). Inspect to prove the chain; never launch active fuzzing/injection against an out-of-scope host.
+* **Wildcard scope** → `/recon` runs subdomain discovery (via `/profundis`) first, then maps each live host.
+* **Single host / URL** → skip subdomain enum (out of scope); `/recon` maps that host and the APIs it calls.
+* **Raw request / credentials given** → still run a light recon pass on the host, but anchor on the given input.
 
-### Tooling: Caido MCP — primary action surface
+Recon is **passive-first and headless** (the `/recon` skill — `gau`, `xnLinkFinder`, `ugrep`,
+`curl`, a headless browser). Active vulnerability testing then runs **headless** too — `curl` for
+HTTP, headless Playwright for browser-context work. Scope still
+governs everything: don't actively fuzz out-of-scope hosts — you *may inspect* an adjacent asset
+(sibling/parent subdomain, archived JS, an older/mobile API) when a chain demonstrably routes back
+to in-scope impact (parent-domain cookie scope, a subdomain-takeover that yields ATO on the
+target). Inspect to prove the chain; never launch active fuzzing/injection against an out-of-scope host.
 
-**Caido is the default tool and the system of record.** Route every request you *can* through Caido so it lands in project history and stays correlated with findings — prefer it over bare `curl` for anything you can replay or mutate as an HTTP request. When a technique genuinely needs another tool (race-condition bursts, `sqlmap`, `ffuf`), point that tool at your proxy so the traffic still lands in Caido's history; only if a one-off truly can't be proxied, fire it and note why. The rule is *captured, replayable traffic* — not a blanket ban on other tools.
+### Tooling: headless HTTP — `curl` is the action surface
+
+**Everything is headless. `curl` is the default HTTP tool, and the saved request/response files
+are the system of record.** There is no proxy GUI — you craft, send, replay and mutate requests
+with `curl`, and write what matters to your working directory so it stays correlated with findings.
 
 **Read — ground truth:**
-* Pull captured requests/responses from the active Caido project before doing anything else
-* Read the project scope as ground truth — don't assume, verify
-* Check replay history to avoid re-treading paths already tried
-* Caido is the single source of truth for "what's been seen" in this engagement
+* Before doing anything, read what you've already captured for the target host — saved request/response files and the `/recon` output.
+* Treat the program scope as ground truth — don't assume, verify.
+* Keep a note of paths already tried so you don't re-tread them.
 
-**Act — drive all HTTP testing through Caido:**
-* Replay captured requests with mutations: modified params, swapped session tokens, removed auth headers, changed verbs, injected payloads
-* Send new crafted requests through Caido (`caido_send_request`) so they land in history
-* Use Caido for all vulnerability testing: IDOR, RBAC, SQLi, SSRF, XSS payloads, XXE, SSTI, auth bypass, parameter pollution
-* Lean on Caido's session/auth context — replays carry the right cookies/tokens automatically
-* Use Caido automate for multi-step or iterative payload testing (not ffuf unless explicitly needed)
+**Act — drive all HTTP testing through `curl`:**
+* Replay a captured request with mutations: modified params, swapped session tokens, removed auth headers, changed verbs, injected payloads.
+* Carry auth explicitly: pass each account's session cookie/token with `-H "Cookie: …"` / `-H "Authorization: Bearer …"`. Keep one header set per identity (user1 / user2 / unauth) for IDOR/RBAC.
+* Cover every class this way: IDOR, RBAC, SQLi, SSRF, XSS payloads, XXE, SSTI, auth bypass, parameter pollution.
+* Save the request + response of anything that proves (or might prove) a bug — that file is your PoC source.
+* For multi-step or iterative payload testing, script `curl` in a small loop — stay under the rate limit, no mass enumeration.
 
-**Default decision:** Can I test this by replaying/mutating an HTTP request? → **Use Caido.** Full stop.
+**Default decision:** Can I test this by replaying/mutating an HTTP request? → **Use `curl`, headless.** Full stop.
 
-### Tooling: Playwright MCP — DOM-aware engine
+### Tooling: Playwright (headless) — DOM-aware engine
 
-Playwright is not a fallback — it is a specialized instrument for work that requires a live browser context. All browser traffic is proxied through Caido automatically, so the session and requests still land in the project. Playwright operates in one of three named modes; pick the right one, execute it, then return to Caido.
+Playwright is not a fallback — it is a specialized instrument for work that requires a live browser context, and it runs **entirely headless** (no visible window). Use it only for what `curl` can't do: rendering JS, confirming execution, walking a SPA. Its outputs — discovered endpoints, console logs, storage dumps, screenshots — are saved to your working files. Playwright operates in one of three named modes; pick the right one, execute it, then return to `curl`.
 
 ---
 
@@ -84,24 +118,24 @@ Playwright is not a fallback — it is a specialized instrument for work that re
 
 **Trigger:** login requires JS-generated nonce, PKCE challenge, MFA prompt, or client-side CSRF token that cannot be replayed raw.
 
-**Task:** complete the auth flow in the browser. Nothing else.
+**Task:** complete the auth flow in the headless browser. Nothing else.
 
-**Exit:** session cookie / token is now in Caido. Switch immediately. Do not test anything in the browser.
+**Exit:** extract the session cookie / token from the browser and hand it to `curl` (as a `-H "Cookie: …"` / bearer header). Switch immediately. Do not test anything in the browser.
 
 ---
 
 #### Mode 2 — XSS Validator
 
-**Trigger:** a Caido response contains a reflected or stored injection candidate — the payload appears in the response body or a JS variable — and execution cannot be inferred from the HTTP response alone.
+**Trigger:** an HTTP response (from `curl`) contains a reflected or stored injection candidate — the payload appears in the response body or a JS variable — and execution cannot be inferred from the HTTP response alone.
 
 **Tasks:**
-* Load the page carrying the payload in the browser
+* Load the page carrying the payload in the headless browser
 * Confirm JS execution fires (alert, console output, network callback, cookie read)
-* If blind XSS: plant the payload via Caido, open the target surface in the browser to trigger rendering
+* If blind XSS: plant the payload with `curl`, open the target surface in the headless browser to trigger rendering
 * Capture: browser console output, screenshot at moment of execution, any exfiltrated data
 * If CSP is present: test the payload anyway — headers lie, execution is truth
 
-**Exit:** execution confirmed → screenshot saved → back to Caido to write the PoC request chain. Execution not confirmed → rule it out, back to Caido.
+**Exit:** execution confirmed → screenshot saved → back to `curl` to write the PoC request chain. Execution not confirmed → rule it out, back to `curl`.
 
 ---
 
@@ -112,14 +146,14 @@ Playwright is not a fallback — it is a specialized instrument for work that re
 * JS source contains `postMessage` / `addEventListener('message')` with no origin check
 * JS source contains dangerous sinks: `innerHTML`, `document.write`, `eval`, `Function()`, `setTimeout(string)`
 * Auth tokens or role data stored in `localStorage` / `sessionStorage` rather than cookies
-* Client-side routing exposes paths not surfaced in Caido traffic (hash routes, pushState routes)
+* Client-side routing exposes paths not surfaced in raw HTTP / `curl` traffic (hash routes, pushState routes)
 
 **Tasks:**
 * Walk the JS-rendered route tree — every role-gated page, every lazy-loaded view
 * Inspect `localStorage` and `sessionStorage` for tokens, UUIDs, role strings, user IDs
 * Identify `postMessage` handlers and test with crafted messages from a controlled origin
 * Trace data flow from user-controlled input to DOM sinks in the browser debugger
-* Every network request made during the walk lands in Caido automatically — that is the primary output
+* Capture every network request the walk makes — save the discovered URLs/endpoints/params to a file; that inventory is the primary output
 
 **Capture during any DOM Hunter run:**
 * Full console output (JS errors, debug logs, leaked data)
@@ -127,47 +161,60 @@ Playwright is not a fallback — it is a specialized instrument for work that re
 * Any `postMessage` handler signatures
 * Screenshot of role-gated UI not visible in HTTP
 
-**Exit:** DOM surface inventory is complete. Hand all discovered endpoints, routes, and parameters to Caido for HTTP-level testing. Do not test injection or access control in the browser — Caido handles it from here.
+**Exit:** DOM surface inventory is complete. Hand all discovered endpoints, routes, and parameters to `curl` for HTTP-level testing. Do not test injection or access control in the browser — `curl` handles it from here.
 
 ---
 
 #### Never use Playwright for
 
-* API endpoint testing — Caido handles it
-* Parameter mutation, injection payload iteration — Caido handles it
-* IDOR / RBAC / SSRF / SQLi / XXE / SSTI — Caido handles it
+* API endpoint testing — test it with `curl`
+* Parameter mutation, injection payload iteration — `curl` handles it
+* IDOR / RBAC / SSRF / SQLi / XXE / SSTI — `curl` handles it
 * Anything reducible to "send this HTTP request with a different value"
 
 ---
 
-**Architecture reminder:** Caido is the intercepting proxy and session manager. Playwright is the DOM-aware sensor that feeds Caido. Every Playwright run produces artifacts (requests, tokens, routes, screenshots) that flow back into Caido as inputs for the next phase.
+**Architecture reminder:** `curl` is the headless HTTP action surface; Playwright (headless) is the DOM-aware sensor that feeds it. The saved working files (requests/responses, JS bundles, screenshots, storage dumps) are the system of record. Every Playwright run produces artifacts (endpoints, tokens, routes, screenshots) that become inputs for the next `curl` phase.
+
+### Phase 0: Recon — map the attack surface (`/recon`)
+
+**Invoke `/recon` first.** It is headless and passive-first, and it produces the inventory every
+later phase consumes:
+* **Map + fingerprint** the framework (Next / Nuxt / React / Angular / Vue / Vite / webpack) — tells you where chunks, SSR data blobs and API routes live.
+* **All JS** — `gau` harvest + headless-walk capture, plus **webpack-chunk** reconstruction and **source maps** (original source is gold).
+* **Endpoints & params** — `xnLinkFinder` + `ugrep` over the saved bundles.
+* **Secrets** — `ugrep -f secret-patterns.txt` over the JS (hardcoded keys/tokens = report on their own).
+* **DOM sinks / `postMessage` / hidden params** — `ugrep -f dom-sinks.txt`, handed to `/xss`.
+* **Subdomains** — wildcard scope only, via `/profundis`.
+
+Add the hosts/endpoints recon returns to your working scope/target list. Then go after **XSS
+(reflected + DOM) and secrets first**, the other classes after — unless recon already surfaced an
+obvious crit (escape hatch).
 
 ### Phase 1: Anchor on the given input
-1. Check the active Caido project first — pull existing requests for the target host. Don't start from scratch if traffic is already captured.
-2. If a raw request was provided, load it into Caido and replay as-is first — confirm it works — then mutate from there.
-3. If credentials were provided and the app needs browser-based login, use Playwright **once** to authenticate. The session cookie lands in Caido automatically. Switch to Caido for everything after.
-4. If only a URL was given with no auth, treat it as **unauthenticated surface**: test via Caido directly (static endpoints, signup flows, public APIs).
+1. Read your saved working files first — any requests/responses already captured for the target host, plus the `/recon` output. Don't start from scratch if you already have traffic.
+2. If a raw request was provided, replay it as-is first with `curl` — confirm it works — then mutate from there.
+3. If credentials were provided and the app needs browser-based login, use Playwright (headless) **once** to authenticate, then extract the session cookie/token and drive everything after with `curl`.
+4. If only a URL was given with no auth, treat it as **unauthenticated surface**: test with `curl` directly (static endpoints, signup flows, public APIs).
 5. Capture the response in detail: cookies set, tokens issued, redirects, framework fingerprints, JS bundle URLs.
 
 ### Phase 2: Mine the application surface
-For the given URL and the APIs it calls:
-* **Mine the JavaScript bundles** for:
-  * API endpoints not exposed in UI
-  * Hidden routes (`/api/internal/*`, `/api/admin/*`, `/v1/*` when current is `/v3/*`)
-  * Feature flags, role names, permission strings
-  * Cloud bucket names, third-party integrations referenced from this app
-  * Hardcoded credentials, API keys, cloud tokens, private keys — **do not dismiss; treat as a chain starter toward critical**
+`/recon` (Phase 0) already did the heavy JS mining — endpoints, hidden routes, params, secrets,
+webpack chunks, source maps. This phase **consumes that output** and fills the host-specific gaps:
+* **Read the recon output** — the JS-derived endpoints not exposed in UI, hidden routes
+  (`/api/internal/*`, `/api/admin/*`, `/v1/*` when current is `/v3/*`), feature flags, role/permission
+  strings, cloud bucket names, and any **hardcoded keys/tokens** (do not dismiss — chain starter toward critical).
 * **Check `robots.txt`, `sitemap.xml`, `/.well-known/*`** for endpoint hints on this host only.
 * **Introspect GraphQL** if the app uses it (`/graphql` with `__schema` query).
 * **Pull OpenAPI / Swagger** if exposed (`/swagger`, `/openapi.json`, `/v3/api-docs`).
-* If a **source map** is exposed, pull it — original source is gold.
+* **Re-run recon** when you discover a new in-scope host or a `.map` that reconstructs new source.
 
 **Always mine, mine, mine, probe.** This is where real bugs hide. Generic crawling stops at the front page.
 
 ### Phase 3: App walkthrough as a real user
-1. If the app requires browser interaction to surface endpoints (JS-rendered routes, role-gated UI), use Playwright to walk through it. Every browser request proxies through Caido automatically — the goal is to populate Caido's history, not to test in the browser.
-2. Once the walkthrough is done, **stop using Playwright** and work exclusively from Caido's captured traffic.
-3. Build an inventory from Caido: every endpoint, every parameter, every ID format, every auth state.
+1. If the app requires browser interaction to surface endpoints (JS-rendered routes, role-gated UI), use Playwright (headless) to walk through it. Capture every request the browser makes — save the discovered URLs/endpoints/params to a file; the goal is to build the inventory, not to test in the browser.
+2. Once the walkthrough is done, **stop using Playwright** and work from the captured inventory with `curl`.
+3. Build an inventory from the captured traffic: every endpoint, every parameter, every ID format, every auth state.
 4. Sign up / request a **second account** from Liodeus if multi-tenancy / per-user data is involved — needed for IDOR/RBAC testing without touching real users. **Do not self-create accounts unless Liodeus has confirmed signup is in scope.**
 
 ### Phase 4: Per-feature deep dive
@@ -186,8 +233,8 @@ For each feature, ask:
 
 Before moving to chaining or reporting, run this loop on every candidate finding:
 
-1. **Replay** — re-fire the exact PoC request from Caido and confirm the response still shows the issue. If it doesn't reproduce cleanly, it's noise.
-2. **Cross-account confirm** — for any IDOR/RBAC finding, replay the request authenticated as the second account. A 200 from your own session proves nothing.
+1. **Replay** — re-fire the exact PoC request with `curl` and confirm the response still shows the issue. If it doesn't reproduce cleanly, it's noise.
+2. **Cross-account confirm** — for any IDOR/RBAC finding, replay the request with the second account's cookie/token (swap the auth header). A 200 from your own session proves nothing.
 3. **Execution confirm** — for any XSS candidate, load the page in Playwright and confirm JS fires. Do not assume execution from the HTTP response alone.
 4. **Scope confirm** — verify the endpoint is in scope before spending more time on it.
 
@@ -213,7 +260,7 @@ A single primitive is rarely the bounty. Chain:
 * **No exfiltration of customer data.** Capture proof (1 record, your own user where possible, or hash/length of sensitive data) and stop.
 * **No social engineering of program staff** unless the program explicitly allows it.
 * **No mass email / phishing tests** — even simulated — unless explicitly in scope.
-* **Keep traffic captured.** Drive HTTP testing through Caido (`caido_send_request` or replay) so it's logged and replayable; don't fire bare `curl` that throws requests into the void. When a technique needs another tool (race bursts, `sqlmap`, `ffuf`), proxy it through Caido/your upstream so it still lands in history.
+* **Keep a record.** Save the request + response of every meaningful test and PoC to your working files so it's reproducible; don't fire requests whose result you don't record. When a technique needs another tool (race bursts, `sqlmap`, `ffuf`), save its output too — the saved files are the system of record.
 * **Respect rate limits.** If the program has documented limits, stay below them. If not, stay under 10 req/s on production endpoints.
 * **WAF detected → don't brute-force.** If a WAF is detected (403/406/451 patterns, block page, WAF fingerprint), do NOT run ffuf recursively and do NOT hammer SQLi payloads. Either skip that technique or do it lightly with a small targeted wordlist, low concurrency, no recursion. Aggressive fuzzing behind a WAF burns the engagement, triggers IP bans, and produces noise.
 * **Halt on accidental impact.** If something breaks production-looking, stop and document — don't try to clean up by doing more requests.
@@ -222,7 +269,7 @@ A single primitive is rarely the bounty. Chain:
 ## When testing destructive-shaped actions
 
 Some bugs (account-deletion IDORs, mass-email triggers, payment endpoints) have natural destructive shapes. Rules:
-* If you can prove the bug **without firing the destructive action**, do that (e.g., observe a 200 response in Burp without actually submitting; or use a 403/permission edge case that confirms the check is missing without consuming the side effect).
+* If you can prove the bug **without firing the destructive action**, do that (e.g., observe a 200 response without actually submitting the side effect; or use a 403/permission edge case that confirms the check is missing without consuming it).
 * If the only proof is firing it, fire it **once** against your own resource and document.
 * Do not fire it against real users. Firing against the second test account or any account Liodeus explicitly grants permission for is allowed.
 
@@ -255,7 +302,7 @@ Invoke `/report-yeswehack` as soon as a finding is confirmed. The skill owns str
 
 ### Artifacts to pass to `/report-yeswehack`
 
-Pull these from the active Caido session before invoking:
+Pull these from your saved working files before invoking:
 * **Request** — exact HTTP method, path, headers, body
 * **Response** — status code + fields that prove the bug
 * **Session context** — which account (user1 / user2 / unauth)
@@ -285,6 +332,7 @@ Do not modify this CLAUDE.md per-program — modify the per-program memory.
 ## Skill triggers
 
 Skills auto-surface from their `description:` triggers — invoke the matching one the moment its signal appears; don't reason from scratch when a skill exists. The only sequencing rules the descriptions can't express:
+* **Start every engagement with `/recon`.** Then prioritise `/xss` (reflected + DOM) and JS secrets before the heavier vuln skills (`/idor`, `/rbac`, `/ssrf`, `/sql`, …) — unless an obvious higher-impact bug surfaces first, in which case chase it immediately.
 * Chain `/waf-bypass` into the underlying-vuln skill — never report a bypass alone.
 * Invoke `/report-yeswehack` only once all four reporting gates are met (confirmed, in-scope, PoC, impact).
 
