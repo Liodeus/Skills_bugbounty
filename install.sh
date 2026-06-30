@@ -5,7 +5,8 @@
 # Installs/prepares everything hunt.sh + the skills need:
 #   1. Verifies system prerequisites (node, npm, npx; soft: python3, go, claude)
 #   2. Installs Node dependencies (httpworkbench MCP + @playwright/mcp)
-#   3. Installs the headless Playwright Chromium browser
+#   3. Installs the headless Playwright Chromium browser            (→ playwright-user1/2/3)
+#   3b. Installs the Lightpanda browser binary + native MCP server   (→ lightpanda-user1/2/3)
 #   4. Generates the playwright-chrome headless configs (configs/userN.json)
 #   4b. Installs the hunting CLI tools the skills call:
 #       gau, xnLinkFinder, ugrep (/recon) · ffuf + SecLists (/ffuf-skill) ·
@@ -13,9 +14,11 @@
 #   5. Verifies the stdio MCP servers parse · 6. Installs the global `hunt` command
 #
 # Everything runs FULLY HEADLESS — no Burp/Caido. curl is the HTTP action surface,
-# headless Playwright the DOM engine. mitmdump is OPTIONAL (only for start.sh's
-# upstream-proxy helper). Idempotent: safe to re-run. hunt.sh auto-invokes this on
-# first run, but you can also run it directly after cloning:  ./install.sh
+# and hunt.sh wires TWO headless DOM engines into every workspace: @playwright/mcp
+# over bundled Chromium, and Lightpanda's native MCP. Both run direct (no proxy).
+# mitmdump is OPTIONAL (only for start.sh's upstream-proxy helper). Idempotent: safe
+# to re-run. hunt.sh auto-invokes this on first run, but you can also run it directly
+# after cloning:  ./install.sh
 #
 # Exit codes: 0 = ready, 1 = a hard prerequisite is missing.
 
@@ -94,6 +97,54 @@ fi
 echo
 
 # ---------------------------------------------------------------------------
+# 3b. Lightpanda browser backend — native `lightpanda mcp` server + binary.
+#     hunt.sh wires lightpanda-user1/2/3 (headless, direct) from this binary.
+#     Idempotent: skipped if the binary already resolves ($LIGHTPANDA_BIN > repo-local > PATH);
+#     otherwise the nightly for the detected platform is downloaded into the repo folder.
+#     Additive only — never exits on failure (Chrome remains the default DOM engine).
+# ---------------------------------------------------------------------------
+LP_DIR="$ROOT/playwright-lightpanda"
+if [ -d "$LP_DIR" ]; then
+    echo "🐼 Setting up the Lightpanda backend (native MCP server)..."
+    if [ -n "${LIGHTPANDA_BIN:-}" ] && [ -x "$LIGHTPANDA_BIN" ]; then
+        :  # explicit override — use as-is
+    elif [ -x "$LP_DIR/lightpanda" ]; then
+        LIGHTPANDA_BIN="$LP_DIR/lightpanda"
+    elif command -v lightpanda >/dev/null 2>&1; then
+        LIGHTPANDA_BIN="$(command -v lightpanda)"
+    else
+        # No binary found — download the nightly for the detected platform.
+        case "$(uname -sm)" in
+            "Linux x86_64")  ASSET="lightpanda-x86_64-linux" ;;
+            "Linux aarch64") ASSET="lightpanda-aarch64-linux" ;;
+            "Darwin arm64")  ASSET="lightpanda-aarch64-macos" ;;
+            "Darwin x86_64") ASSET="lightpanda-x86_64-macos" ;;
+            *) ASSET="" ;;
+        esac
+        if [ -n "$ASSET" ]; then
+            URL="https://github.com/lightpanda-io/browser/releases/download/nightly/$ASSET"
+            echo "   • curl -fL --retry 3 -o $LP_DIR/lightpanda $URL"
+            if curl -fL --retry 3 -o "$LP_DIR/lightpanda" "$URL" && chmod +x "$LP_DIR/lightpanda"; then
+                LIGHTPANDA_BIN="$LP_DIR/lightpanda"
+                ok "lightpanda binary downloaded"
+            else
+                warn "download failed — get it manually: $URL   (or: brew install lightpanda-io/browser/lightpanda)"
+            fi
+        else
+            warn "no prebuilt lightpanda nightly for $(uname -sm) — build from source or use brew (macOS)."
+        fi
+    fi
+    if [ -n "${LIGHTPANDA_BIN:-}" ] && [ -x "$LIGHTPANDA_BIN" ]; then
+        ok "lightpanda OK ($("$LIGHTPANDA_BIN" version 2>/dev/null || echo '?'))  →  $LIGHTPANDA_BIN"
+        mkdir -p "$LP_DIR/state"   # per-user cookie jars (gitignored)
+        ok "lightpanda native MCP ready — hunt.sh wires lightpanda-user1/2/3"
+    fi
+else
+    warn "playwright-lightpanda/ not found — skipping Lightpanda backend (Chrome still available)."
+fi
+echo
+
+# ---------------------------------------------------------------------------
 # 4. Generate playwright-chrome proxy configs (configs/userN.json)
 # ---------------------------------------------------------------------------
 if [ -x "$ROOT/playwright-chrome/setup.sh" ]; then
@@ -153,6 +204,10 @@ pkg_install dig  dnsutils bind
 # JS URL harvest + active fuzzing (Go tools).
 go_install gau   github.com/lc/gau/v2/cmd/gau@latest
 go_install ffuf  github.com/ffuf/ffuf/v2@latest
+
+# notify — Discord/Slack/… alerting on confirmed findings (/report-yeswehack Step 4).
+# Provider config (webhook) lives at ~/.config/notify/provider-config.yaml — NOT installed here, it's a secret.
+go_install notify github.com/projectdiscovery/notify/cmd/notify@latest
 
 # xnLinkFinder (Python) — endpoint/param extraction from JS
 if command -v xnLinkFinder >/dev/null 2>&1; then
@@ -241,11 +296,18 @@ PW_CLI="$ROOT/node_modules/@playwright/mcp/cli.js"
 echo "────────────────────────────────────────────────────────"
 ok "Setup complete."
 if [ ${#MCP_NAMES[@]} -gt 0 ]; then
-    echo "   • stdio MCP servers  → auto-wired into each workspace's .mcp.json by hunt.sh:"
-    echo "       ${MCP_NAMES[*]}  (+ playwright-user1/2/3, headless)"
+    echo "   • stdio MCP servers → auto-wired into each workspace's .mcp.json by hunt.sh:"
+    echo "       ${MCP_NAMES[*]}"
+fi
+echo "   • headless DOM engines → auto-wired into each workspace's .mcp.json by hunt.sh"
+echo "     (Lightpanda is the DEFAULT; Chrome is the fallback for JS-rendering problems):"
+if [ -n "${LIGHTPANDA_BIN:-}" ] && [ -x "$LIGHTPANDA_BIN" ]; then
+    echo "       • Lightpanda  → lightpanda-user1/2/3   (default · native MCP · $LIGHTPANDA_BIN)"
+else
+    warn "Lightpanda binary not installed — lightpanda-user1/2/3 won't be wired."
 fi
 if [ -f "$PW_CLI" ]; then
-    echo "   • Playwright MCP cli → $PW_CLI"
+    echo "       • Chrome      → playwright-user1/2/3   (fallback · @playwright/mcp cli: $PW_CLI)"
 else
     warn "Playwright MCP cli missing ($PW_CLI) — re-run after a successful 'npm install'."
 fi

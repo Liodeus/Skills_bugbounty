@@ -12,6 +12,13 @@ mkdir -p "$CONFIGS"
 # testing (IDOR / RBAC / cross-tenant). Fully headless, no proxy — everything runs direct.
 # (If you ever want to route through an OPTIONAL upstream proxy, run ./start.sh and add a
 #  "proxy" block to launchOptions below pointing at localhost:808N.)
+#
+# IMPORTANT — channel:"chromium" in launchOptions is load-bearing. @playwright/mcp defaults
+# its channel to "chrome" (system Google Chrome at /opt/google/chrome/chrome). install.sh only
+# installs Playwright's BUNDLED Chromium (`npx playwright install chromium` → ~/.cache/ms-playwright),
+# NOT system Chrome — so without this override the MCP dies with "Chrome isn't installed" /
+# "Chromium distribution 'chrome' is not found". channel:"chromium" makes it use the bundled
+# browser instead. Do not remove it. (Equivalent CLI flag: --browser chromium.)
 
 # To enable the opt-in DOM-XSS instrument (pre-load sink hooks + postMessage wiretap,
 # see SKILLS/xss/playwright-dom-debugging.md), add init/xss-instrument.js to the
@@ -25,6 +32,7 @@ for i in 1 2 3; do
   "browser": {
     "userDataDir": "/tmp/pw-chrome-user${i}",
     "launchOptions": {
+      "channel": "chromium",
       "headless": true
     },
     "contextOptions": {

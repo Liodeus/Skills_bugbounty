@@ -91,7 +91,7 @@ hunt — XSS and secrets first, the rest after (see *Hunting workflow* above).
 
 Recon is **passive-first and headless** (the `/recon` skill — `gau`, `xnLinkFinder`, `ugrep`,
 `curl`, a headless browser). Active vulnerability testing then runs **headless** too — `curl` for
-HTTP, headless Playwright for browser-context work. Scope still
+HTTP, the headless browser (Lightpanda by default, Chrome fallback) for browser-context work. Scope still
 governs everything: don't actively fuzz out-of-scope hosts — you *may inspect* an adjacent asset
 (sibling/parent subdomain, archived JS, an older/mobile API) when a chain demonstrably routes back
 to in-scope impact (parent-domain cookie scope, a subdomain-takeover that yields ATO on the
@@ -117,9 +117,22 @@ with `curl`, and write what matters to your working directory so it stays correl
 
 **Default decision:** Can I test this by replaying/mutating an HTTP request? → **Use `curl`, headless.** Full stop.
 
-### Tooling: Playwright (headless) — DOM-aware engine
+### Tooling: Headless browser — DOM-aware engine
 
-Playwright is not a fallback — it is a specialized instrument for work that requires a live browser context, and it runs **entirely headless** (no visible window). Use it only for what `curl` can't do: rendering JS, confirming execution, walking a SPA. Its outputs — discovered endpoints, console logs, storage dumps, screenshots — are saved to your working files. Playwright operates in one of three named modes; pick the right one, execute it, then return to `curl`.
+A live browser context is a specialized instrument for what `curl` can't do — rendering JS, confirming execution, walking a SPA — and it runs **entirely headless** (no visible window). Use it only for those cases, save its outputs (discovered endpoints, console logs, storage dumps, screenshots) to your working files, then return to `curl`.
+
+**Two backends are wired into every workspace — Lightpanda is the default:**
+
+| Backend | MCP servers (3 isolated identities each) | Use it when |
+|---|---|---|
+| **Lightpanda** *(default)* | `lightpanda-user1/2/3` — native MCP (`goto`, `markdown`, `tree`, `interactiveElements`, `click`, `fill`, `extract`, `links`, …) | **Always try first.** Lighter and faster than Chrome. |
+| **Chrome** *(fallback)* | `playwright-user1/2/3` — `@playwright/mcp` (`browser_navigate`, `browser_snapshot`, `browser_evaluate`, …) | Only when Lightpanda **can't render the page**: blank/partial DOM, missing JS-rendered content, JS it can't execute, or a tool errors out. Re-run the same action on the matching `playwright-userN`. |
+
+Lightpanda is beta with partial Web-API coverage, so complex / heavily-JS SPAs are exactly when you fall back to Chrome. The toolsets differ — pick the engine first, then use whatever tools that server exposes. Keep one identity per account (user1 / user2 / unauth) for IDOR/RBAC; cookie jars are isolated per identity in both backends.
+
+**One Chrome-only exception:** the DOM-XSS debugging instrument (`/xss` → `playwright-dom-debugging.md`) relies on Playwright's `initScript` / `browser_evaluate` injection (sink hooks, postMessage wiretap). Lightpanda's native MCP can't run it — use `playwright-userN` (Chrome) for that specific flow.
+
+The browser operates in one of three named modes; pick the right one, execute it, then return to `curl`.
 
 ---
 
@@ -174,7 +187,7 @@ Playwright is not a fallback — it is a specialized instrument for work that re
 
 ---
 
-#### Never use Playwright for
+#### Never use the headless browser for
 
 * API endpoint testing — test it with `curl`
 * Parameter mutation, injection payload iteration — `curl` handles it
@@ -183,7 +196,7 @@ Playwright is not a fallback — it is a specialized instrument for work that re
 
 ---
 
-**Architecture reminder:** `curl` is the headless HTTP action surface; Playwright (headless) is the DOM-aware sensor that feeds it. The saved working files (requests/responses, JS bundles, screenshots, storage dumps) are the system of record. Every Playwright run produces artifacts (endpoints, tokens, routes, screenshots) that become inputs for the next `curl` phase.
+**Architecture reminder:** `curl` is the headless HTTP action surface; the headless browser (**Lightpanda by default, Chrome fallback**) is the DOM-aware sensor that feeds it. The saved working files (requests/responses, JS bundles, screenshots, storage dumps) are the system of record. Every browser run produces artifacts (endpoints, tokens, routes, screenshots) that become inputs for the next `curl` phase.
 
 ### Phase 0: Recon — map the attack surface (`/recon`)
 
@@ -203,7 +216,7 @@ obvious crit (escape hatch).
 ### Phase 1: Anchor on the given input
 1. Read your saved working files first — any requests/responses already captured for the target host, plus the `/recon` output. Don't start from scratch if you already have traffic.
 2. If a raw request was provided, replay it as-is first with `curl` — confirm it works — then mutate from there.
-3. If credentials were provided and the app needs browser-based login, use Playwright (headless) **once** to authenticate, then extract the session cookie/token and drive everything after with `curl`.
+3. If credentials were provided and the app needs browser-based login, use the headless browser (Lightpanda by default) **once** to authenticate, then extract the session cookie/token and drive everything after with `curl`.
 4. If only a URL was given with no auth, treat it as **unauthenticated surface**: test with `curl` directly (static endpoints, signup flows, public APIs).
 5. Capture the response in detail: cookies set, tokens issued, redirects, framework fingerprints, JS bundle URLs.
 
@@ -221,8 +234,8 @@ webpack chunks, source maps. This phase **consumes that output** and fills the h
 **Always mine, mine, mine, probe.** This is where real bugs hide. Generic crawling stops at the front page.
 
 ### Phase 3: App walkthrough as a real user
-1. If the app requires browser interaction to surface endpoints (JS-rendered routes, role-gated UI), use Playwright (headless) to walk through it. Capture every request the browser makes — save the discovered URLs/endpoints/params to a file; the goal is to build the inventory, not to test in the browser.
-2. Once the walkthrough is done, **stop using Playwright** and work from the captured inventory with `curl`.
+1. If the app requires browser interaction to surface endpoints (JS-rendered routes, role-gated UI), use the headless browser (Lightpanda by default) to walk through it. Capture every request the browser makes — save the discovered URLs/endpoints/params to a file; the goal is to build the inventory, not to test in the browser.
+2. Once the walkthrough is done, **stop using the browser** and work from the captured inventory with `curl`.
 3. Build an inventory from the captured traffic: every endpoint, every parameter, every ID format, every auth state.
 4. **Self-provision a second account** when multi-tenancy / per-user data is involved — needed for IDOR/RBAC testing without touching real users. If signup is open in scope, just create it (and a third role if the app offers tiered self-signup). If signup scope is ambiguous, do not block on Liodeus — default to the safe path: hunt with the single account you have plus role inference (`/rbac`, `/ato`), and write one line noting you assumed no second account. Never create accounts on a target whose scope clearly excludes it.
 
@@ -244,7 +257,7 @@ Before moving to chaining or reporting, run this loop on every candidate finding
 
 1. **Replay** — re-fire the exact PoC request with `curl` and confirm the response still shows the issue. If it doesn't reproduce cleanly, it's noise.
 2. **Cross-account confirm** — for any IDOR/RBAC finding, replay the request with the second account's cookie/token (swap the auth header). A 200 from your own session proves nothing.
-3. **Execution confirm** — for any XSS candidate, load the page in Playwright and confirm JS fires. Do not assume execution from the HTTP response alone.
+3. **Execution confirm** — for any XSS candidate, load the page in the headless browser (Lightpanda by default) and confirm JS fires. Do not assume execution from the HTTP response alone.
 4. **Scope confirm** — verify the endpoint is in scope before spending more time on it.
 
 Only pass findings that survive all applicable checks to Phase 5.
@@ -256,6 +269,8 @@ A single primitive is rarely the bounty. Chain:
 * Stored XSS in admin panel → admin session → cross-tenant actions
 * File write → DLL hijack / webshell / cron → RCE
 * Open redirect + OAuth → ATO
+* DOM clobbering (HTML-injection foothold + a `window.X` global read) → script load / CSP-allow-listed JSONP → XSS or CSP bypass (`/xss`)
+* Client-side prototype pollution (`__proto__`/`constructor.prototype` via an insecure parser) → latent sink (`sourceURL`, framework option) → DOM XSS (`/xss`)
 * API key in JS bundle → authenticated backend API access → mass data read → critical
 * Cloud token in JS bundle → S3 / GCS / blob storage → mass PII or internal files → critical
 * Internal service URL in JS bundle → unauthenticated internal API → data or RCE
@@ -284,7 +299,7 @@ Some bugs (account-deletion IDORs, mass-email triggers, payment endpoints) have 
 
 ## Reporting
 
-Invoke `/report-yeswehack` as soon as a finding is confirmed. The skill owns structure, CVSS, and file output — do not replicate its logic here.
+Invoke `/report-yeswehack` as soon as a finding is confirmed. The skill owns structure, CVSS, and file output — do not replicate its logic here. **It also fires a Discord alert** via [`notify`](https://github.com/projectdiscovery/notify) (installed by `install.sh`; provider config at `~/.config/notify/provider-config.yaml`) the moment a finding is written, so you see confirmed bugs land in real time. One alert per confirmed finding, never per probe.
 
 ### Invoke when ALL four gates are met
 
@@ -307,6 +322,7 @@ Invoke `/report-yeswehack` as soon as a finding is confirmed. The skill owns str
 | XXE | `/xxe` | `/report-yeswehack` |
 | RCE chain | `/rce` | `/report-yeswehack` |
 | RBAC / priv-esc | `/rbac` | `/report-yeswehack` |
+| 401/403 access-control bypass | `/403-401` (→ `/rbac`/`/idor` to confirm) | `/report-yeswehack` |
 | WAF bypass chained with vuln | `/waf-bypass` → underlying skill | `/report-yeswehack` |
 
 ### Artifacts to pass to `/report-yeswehack`
@@ -316,7 +332,7 @@ Pull these from your saved working files before invoking:
 * **Response** — status code + fields that prove the bug
 * **Session context** — which account (user1 / user2 / unauth)
 * **Chain steps** — if multi-step, ordered list of requests
-* **Screenshot / recording path** — if Playwright was used for PoC confirmation
+* **Screenshot / recording path** — if the headless browser was used for PoC confirmation
 
 ## Persistence ethic
 
@@ -343,6 +359,7 @@ Do not modify this CLAUDE.md per-program — modify the per-program memory.
 Skills auto-surface from their `description:` triggers — invoke the matching one the moment its signal appears; don't reason from scratch when a skill exists. The only sequencing rules the descriptions can't express:
 * **Start every engagement with `/recon`.** Then prioritise `/xss` (reflected + DOM) and JS secrets before the heavier vuln skills (`/idor`, `/rbac`, `/ssrf`, `/sql`, …) — unless an obvious higher-impact bug surfaces first, in which case chase it immediately.
 * Chain `/waf-bypass` into the underlying-vuln skill — never report a bypass alone.
+* Hit a `401/403` on a gated path → `/403-401`; a confirmed `403→200` flip → confirm cross-user in `/rbac`/`/idor`.
 * Invoke `/report-yeswehack` only once all four reporting gates are met (confirmed, in-scope, PoC, impact).
 
 ---

@@ -208,10 +208,13 @@ Right move: document, don't fight the WAF. Note that the surface is unreachable 
 
 ### Cloudflare / Akamai bot management
 
-If a real browser is genuinely required (rare for cred testing), use the local headless Playwright MCPs (one per identity):
+If a real browser is genuinely required (rare for cred testing), use the local headless browser MCPs — **Lightpanda by default**, Chrome only as a fallback if Lightpanda can't render the page (one per identity):
 
 ```
-mcp__playwright-user1__*
+mcp__lightpanda-user1__*     # default — try first
+mcp__lightpanda-user2__*
+mcp__lightpanda-user3__*
+mcp__playwright-user1__*     # fallback — only if Lightpanda fails to render
 mcp__playwright-user2__*
 mcp__playwright-user3__*
 ```

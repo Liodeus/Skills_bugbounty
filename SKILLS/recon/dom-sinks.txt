@@ -82,13 +82,15 @@ Handlebars\.compile\s*\(
 
 # --- Source-side flow markers (user-controlled inputs that feed the sinks above) ---
 location\.(hash|search|pathname|href|host|hostname|protocol)
-document\.(URL|documentURI|baseURI|referrer|cookie|domain)
+document\.(URL|documentURI|URLUnencoded|baseURI|referrer|cookie|domain)
 window\.name
 history\.state
+history\.(pushState|replaceState)
 URLSearchParams
 \.(getParameter|getParameterByName)\s*\(
 searchParams\.get\s*\(
 (local|session)Storage\.getItem\s*\(
+\bindexedDB\b
 \.postMessage\s*\(
 \bnew\s+URL\s*\(
 
@@ -96,3 +98,8 @@ searchParams\.get\s*\(
 addEventListener\s*\(\s*["'`]message["'`]
 \bonmessage\s*=
 attachEvent\s*\(\s*["'`]onmessage["'`]
+
+# --- Prototype pollution: insecure recursive parsers and gadgets (hand to /xss prototype-pollution.md) ---
+\b(merge|extend|defaultsDeep|set|setWith|deepExtend|deparam|defaults)\s*\(
+__proto__
+constructor\s*\[\s*["'`]prototype
