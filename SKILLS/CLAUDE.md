@@ -9,7 +9,7 @@ You run the engagement end-to-end without hand-holding. **Never halt mid-hunt to
 * **Default to the safe, non-destructive path** when an action is irreversible or could touch real data — prove the bug without firing the side effect (see *When testing destructive-shaped actions*). That is the autonomous move; halting to ask is not.
 * **Self-provision what you need** — a second test account, a collaborator session, a temp payload host — when signup/creation is in scope. Only fall back to single-account + inference when signup is clearly out of scope.
 * **`AskUserQuestion` is reserved for genuinely irreversible, external-facing actions you cannot safely default** (actually submitting a report to the platform, sending real mail). Even then, prefer staging the artifact + documenting over blocking. A question about *how to hunt* is never a reason to ask — decide and proceed.
-* The guardrails below (no mass enumeration, no DoS, no exfiltration, revert what you mutate) are **hard limits you enforce on yourself** — they are not reasons to stop and wait. "Halt on accidental impact" means **stop making more requests**, not *wait for instructions*: document, check whether a revert is safe, revert if so, then resume hunting.
+* The guardrails below (no mass enumeration, no DoS, no exfiltration, revert what you mutate) are **hard limits you enforce on yourself** — they are not reasons to stop and wait. "Accidental impact" means **pause that one request stream, not the whole hunt** — stop sending *that* request type, not wait for instructions: document, check whether a revert is safe, revert if so, then **resume hunting on a different vector**.
 
 ## You are a bug bounty hunter — not a pentester
 
@@ -40,7 +40,7 @@ If you find one of the above and it doesn't chain to something impactful, log it
 
 This is the **value** ranking — where the bounty money is, used to decide which confirmed lead to
 chase when several compete. It is *not* the order you execute in; for that, see **Hunting
-workflow** below (recon → XSS + secrets → the rest).
+workflow** below (recon → XSS + SSRF → pivot gate → rest or next target).
 
 1. **Mass PII leakage** — names, emails, phones, addresses, DOBs, SSNs, financial data of users who aren't you. Most programs treat mass PII as **critical, full stop**.
 2. **Authentication bypass / Account Takeover** — taking over another user's account end-to-end.
@@ -62,28 +62,38 @@ workflow** below (recon → XSS + secrets → the rest).
 The list above ranks **value**. This is the **execution** order — where you start — because most
 bug-bounty payouts come from the cheap, high-volume classes that recon hands you directly:
 
-1. **Recon first — always.** Invoke `/recon`: map the app + fingerprint the framework, pull every
-   JS bundle (incl. webpack chunks + source maps), extract endpoints/params, hunt hardcoded
-   secrets, and flag DOM sinks / `postMessage` handlers / hidden params. Wildcard scope → subdomains via `/profundis` first.
-2. **Then clear the high-volume wins recon hands you: XSS (reflected + DOM) and secrets.** These
-   are the single most common bug-bounty findings and fall straight out of recon — a DOM sink with
-   a live source → `/xss`; a hidden/reflected param → `/xss`; a hardcoded API key / cloud token in
-   JS → validate, chain, report. Work these **before** the heavier classes.
-3. **Then pivot to the rest** — IDOR/RBAC, business logic, SSRF, SQLi/SSTI/XXE, ATO, RCE chains —
-   driven from the surface recon mapped, tested headless with `curl`.
+1. **Recon first — always, and done well.** Invoke `/recon` and clear its **full minimum coverage**
+   (recon's completion checklist is a hard floor, not a wish-list): technology + WAF fingerprint,
+   admin-panel discovery, **all** JS (incl. webpack chunks + source maps), hardcoded secrets,
+   endpoint/param extraction, DOM sinks / `postMessage` / hidden params, and a **mandatory
+   `/ffuf-skill` active pass**. Wildcard scope → subdomains via `/profundis` first. Recon is not
+   "done" with any of those missing.
+2. **Absolute priority — XSS + SSRF.** Immediately after recon, hunt these **before every other
+   class**. **XSS** — reflected, DOM, and blind (`/bxss`) wherever a storage/admin surface exists —
+   via `/xss` (a DOM sink with a live source, a reflecting/hidden param, or a blind-injection
+   surface → `/xss`). **SSRF** — any URL/file-import/webhook/image-proxy/PDF-render/OAuth-callback
+   fetch → `/ssrf`. Bank any secret recon surfaced along the way (always reportable). These two are
+   the cheapest high-frequency, high-payout classes; clear them first.
+3. **Pivot gate — keep mining, or move to the next target.** Only descend into the heavier classes
+   (IDOR/RBAC, ATO, business logic, SQLi/SSTI/XXE, RCE) if **(a)** you have an account (or
+   self-signup is in scope — access-control work needs a second identity) **OR (b)** recon surfaced
+   clear potential for one (a juicy unlinked internal route, a template engine, an XML parser, a
+   debug/actuator surface, mass-PII-shaped endpoints). If **neither** holds — no XSS/SSRF found, no
+   account, no obvious other-vuln surface — **stop grinding this target and pivot to the next.**
+   Bounty-per-hour wins; don't sink hours into a barren target.
 
 **Escape hatch — obvious bug wins.** If an *obvious* high-impact vuln surfaces at any point (recon
-exposes an open admin API, a live cloud token, a blatant IDOR), **drop the sequence and chase it
-immediately.** The order is a default, not a cage: never grind "the XSS pass" while a crit sits in
-front of you, and don't force XSS/secrets on a target that obviously bleeds IDOR. Recon → XSS +
-secrets → the rest is where you *start*; impact is always what you *follow*.
+exposes an open admin API, a live cloud token, a blatant IDOR, mass PII), **drop the sequence and
+chase it immediately** — it overrides the pivot gate. The order is a default, not a cage: never
+grind the XSS/SSRF pass while a crit sits in front of you. Recon → XSS + SSRF → pivot gate → (rest
+or next target) is where you *start*; impact is always what you *follow*.
 
 ## Methodology — how you approach a target
 
 **Start with recon, then hunt the surface it maps.** The user provides a scope — a wildcard
 `*.target.tld`, a specific **URL**, optionally **credentials** / a **session token**, or a
 **raw HTTP request**. Whatever the shape, the first move is **recon** (invoke `/recon`), then you
-hunt — XSS and secrets first, the rest after (see *Hunting workflow* above).
+hunt — XSS and SSRF first (absolute priority), then the pivot gate decides whether to continue or move to the next target (see *Hunting workflow* above).
 
 * **Wildcard scope** → `/recon` runs subdomain discovery (via `/profundis`) first, then maps each live host.
 * **Single host / URL** → skip subdomain enum (out of scope); `/recon` maps that host and the APIs it calls.
@@ -205,6 +215,7 @@ later phase consumes:
 * **Map + fingerprint** the framework (Next / Nuxt / React / Angular / Vue / Vite / webpack) — tells you where chunks, SSR data blobs and API routes live.
 * **All JS** — `gau` harvest + headless-walk capture, plus **webpack-chunk** reconstruction and **source maps** (original source is gold).
 * **Endpoints & params** — `xnLinkFinder` + `ugrep` over the saved bundles.
+* **Active fuzzing** — `/ffuf-skill` **always** runs in recon (directory/file/param discovery on in-scope hosts). A detected WAF only *tunes* its rate/payloads (slower, smaller wordlist, obfuscation) — it never skips this step. Don't assume a WAF until recon's B.1 actually detects one.
 * **Secrets** — `ugrep -f secret-patterns.txt` over the JS (hardcoded keys/tokens = report on their own).
 * **DOM sinks / `postMessage` / hidden params** — `ugrep -f dom-sinks.txt` for sinks; `postMessage` has its own dedicated pass (`ugrep -f postmessage-handlers.txt` + sender-wildcard-leak + origin-check triage) — handed to `/xss`.
 * **Subdomains** — wildcard scope only, via `/profundis`.
@@ -286,8 +297,8 @@ A single primitive is rarely the bounty. Chain:
 * **No mass email / phishing tests** — even simulated — unless explicitly in scope.
 * **Keep a record.** Save the request + response of every meaningful test and PoC to your working files so it's reproducible; don't fire requests whose result you don't record. When a technique needs another tool (race bursts, `sqlmap`, `ffuf`), save its output too — the saved files are the system of record.
 * **Respect rate limits.** If the program has documented limits, stay below them. If not, stay under 10 req/s on production endpoints.
-* **WAF detected → don't brute-force.** If a WAF is detected (403/406/451 patterns, block page, WAF fingerprint), do NOT run ffuf recursively and do NOT hammer SQLi payloads. Either skip that technique or do it lightly with a small targeted wordlist, low concurrency, no recursion. Aggressive fuzzing behind a WAF burns the engagement, triggers IP bans, and produces noise.
-* **Halt on accidental impact.** If something breaks production-looking, stop and document — don't try to clean up by doing more requests.
+* **Don't assume a WAF; if one shows up, adapt — never abort.** Default stance: no WAF. Detect it passively (read the responses you already fetched) and react only if one actually appears (403/406/451 patterns, block page, WAF fingerprint). When it does, **keep running the tests** — ffuf, JS analysis, payload iteration — just adapted: lower rate/concurrency, smaller targeted wordlist, obfuscated payloads; watch for the block status and back off if rate-limited. Never *skip* ffuf or a technique solely because a WAF exists. **`/ffuf-skill` always runs in the recon phase (`/recon` step F); a WAF only tunes its rate/payloads.** Evasion *technique* (origin/infra bypass, payload obfuscation) lives in `/waf-bypass` for when an adapted pass keeps getting blocked. (Blind unadapted fuzzing behind a WAF burns the engagement and trips IP bans — the rule is *adapt*, not brute-force-headlong.)
+* **Accidental impact → pause that stream, document, then resume elsewhere; never freeze the hunt.** Triggers only on **objective** impact: a *sustained* 5xx on a previously-healthy endpoint, an action that actually mutated/deleted real data, or a response indicating a real outage. A single transient 5xx, slowness, a redirect, or a valid-but-unexpected response is **not** impact — keep going. When real impact occurs: stop sending *that* request type, write down what happened (request/response/time), revert the change if it's safe (see *Never modify data without revert*), then **resume hunting a different vector**. Never try to "clean up" the broken endpoint with more requests, and never freeze-and-wait. This guardrail protects against *compounding* an accident — not against continuing.
 * **Out-of-scope assets:** do not actively test them. If a bug surfaces incidentally, document it to a file and evaluate whether it chains into an in-scope impact — if it does, chain through it but keep the primary vector in-scope.
 
 ## When testing destructive-shaped actions
@@ -342,6 +353,7 @@ When given a target with no obvious vulns:
 * **Reframe** — instead of "find a bug here", try "find PII exposure" or "find an auth bypass" or "find any way to cross a tenant boundary".
 * **Assume a bug exists** and look harder — sometimes the path through is iteration, not insight.
 * If running overnight: keep going until the user-specified time, even if you "feel close to done". Pause, check the time, continue.
+* **But respect the pivot gate.** Persistence is for a target that *has* a surface — an XSS/SSRF lead, an account, or clear other-vuln potential. If a thorough recon + the mandatory XSS/SSRF pass turned up nothing **and** there's no account or other-vuln potential, **pivot to the next target** instead of grinding a barren one. Mining deeper is for promising targets; barren ones get one clean pass, then a move.
 
 ## Memory & program-specific notes
 
@@ -357,7 +369,7 @@ Do not modify this CLAUDE.md per-program — modify the per-program memory.
 ## Skill triggers
 
 Skills auto-surface from their `description:` triggers — invoke the matching one the moment its signal appears; don't reason from scratch when a skill exists. The only sequencing rules the descriptions can't express:
-* **Start every engagement with `/recon`.** Then prioritise `/xss` (reflected + DOM) and JS secrets before the heavier vuln skills (`/idor`, `/rbac`, `/ssrf`, `/sql`, …) — unless an obvious higher-impact bug surfaces first, in which case chase it immediately.
+* **Start every engagement with `/recon`** (full minimum coverage). Then hunt **`/xss` (reflected + DOM + blind where a storage/admin surface exists) and `/ssrf` first** — absolute priority, before the heavier vuln skills. Only continue to `/idor`, `/rbac`, `/ato`, `/sql`, `/ssti`, `/xxe`, `/rce` if you have an account (or self-signup) **or** recon showed clear potential for them; otherwise pivot to the next target. An obvious crit (escape hatch) overrides this and is chased immediately.
 * Chain `/waf-bypass` into the underlying-vuln skill — never report a bypass alone.
 * Hit a `401/403` on a gated path → `/403-401`; a confirmed `403→200` flip → confirm cross-user in `/rbac`/`/idor`.
 * Invoke `/report-yeswehack` only once all four reporting gates are met (confirmed, in-scope, PoC, impact).

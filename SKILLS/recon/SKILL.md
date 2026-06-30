@@ -13,8 +13,8 @@ the system of record.
 
 **Tools, kept minimal:** `gau` (passive JS-URL harvest), `xnLinkFinder` (endpoint/param
 extraction), `ugrep` (fast drop-in grep for paths/secrets/sinks), plus `curl`+`jq` and a
-headless browser. Subdomains come from `/profundis`; active content/param fuzzing from
-`/ffuf-skill`. Nothing else.
+headless browser. Subdomains come from `/profundis`; **active content/param fuzzing from
+`/ffuf-skill` — always invoked in recon (step F), WAF or not**. Nothing else.
 
 This skill runs, in order: **(A) subdomains** (wildcard only) → **(B) map & probe the host surface**
 (fingerprint frameworks → **B.1** WAF → **B.2** force errors → **B.3** information disclosure →
@@ -90,9 +90,11 @@ inventory feeds C and F. Dump `localStorage`/`sessionStorage` for tokens, UUIDs,
 
 ### B.1 — Detect the WAF (passive-first, then one probe)
 
-A WAF in front of the host changes how aggressive you can be in **F** (`/ffuf-skill`) — the CLAUDE.md
-*"WAF detected → don't brute-force"* guardrail hinges on this detection. **Recon detects only**;
-evasion lives in `/waf-bypass`. Do it here, once, right after fingerprinting the framework.
+A WAF in front of the host only changes how you **tune** **F** (`/ffuf-skill`) — it never cancels it.
+**Default stance: don't assume a WAF.** Detection here is passive (read responses you already
+fetched); you react only if a WAF actually shows up, and even then you keep running F — just adapted
+(slower rate, smaller wordlist, obfuscated payloads) — never abort. **Recon detects only**; evasion
+*technique* lives in `/waf-bypass`. Do it here, once, right after fingerprinting the framework.
 
 **Passive (read the response you already fetched):** headers, cookies and the error body of the
 landing page usually name the WAF with no provocation.
@@ -122,10 +124,10 @@ curl -sk -o /dev/null -w '%{http_code}' "https://app.target.tld/?id='%20OR%201=1
 # 200 = no WAF (or log-only); 403/406/451 + a block page = WAF present
 ```
 
-Record one line in your working notes: `WAF: <product> | none`. **If a WAF is detected**, evasion is
-not recon's job — hand to **`/waf-bypass`** (its Phase 0 tries infra/origin bypass first, then
-product-specific). And when you reach **F**, throttle `/ffuf-skill` per that guardrail rather than
-brute-forcing into a block.
+Record one line in your working notes: `WAF: <product> | none`. **A detected WAF never aborts recon or
+skips F** — when you reach **F** you still run `/ffuf-skill`, just adapted: lower `-rate`/`-t`, smaller
+targeted wordlist, payload obfuscation. Evasion *technique* (infra/origin bypass first, then
+product-specific) lives in **`/waf-bypass`** for when an adapted ffuf pass keeps getting blocked.
 
 > Long tail of ~100 rarer products (regional, CMS-plugin, enterprise) → `/waf-bypass` ships
 > `waf-fingerprints.md` for the lookup; this compact set covers the ~90% case.
@@ -396,13 +398,15 @@ What to look for:
 
 Feed discovered paths to the vuln skills (`/idor`, `/ssrf`, `/sql`, …) for actual testing.
 
-**Active discovery — `/ffuf-skill`.** The passive map (`gau` + JS) only sees *referenced* paths;
-unlinked directories, files, backups and hidden params won't show up. To brute-force them on
-in-scope hosts, **invoke `/ffuf-skill`** (directory/file/param fuzzing, auto-calibration,
-authenticated raw-request fuzzing). Seed it with `params.txt` and the route prefixes found above.
-Respect rate limits. **If B.1 detected a WAF, throttle hard** — low concurrency, no recursion, small
-wordlist — per the CLAUDE.md *"WAF detected → don't brute-force"* guardrail; hand evasion to
-`/waf-bypass` instead of brute-forcing into a block.
+**Active discovery — `/ffuf-skill` (MANDATORY in recon).** The passive map (`gau` + JS) only sees
+*referenced* paths; unlinked directories, files, backups and hidden params won't show up — so
+**always** run `/ffuf-skill` (directory/file/param fuzzing, auto-calibration `-ac`, authenticated
+raw-request fuzzing) on in-scope hosts. Seed it with `params.txt` and the route prefixes found above;
+save results to a file (`-o ffuf.json`) — the saved file is the system of record. Respect rate limits.
+**A WAF does not skip this step:** if B.1 detected one, run ffuf anyway, just adapted — lower
+`-rate`/`-t` (e.g. `-rate 2 -t 5`), a small targeted wordlist, and payload obfuscation (see
+`/waf-bypass`); watch for the block status and back off the rate if it appears. Default stance is
+no-WAF: don't preemptively throttle before a WAF actually shows up.
 
 ---
 
@@ -535,17 +539,22 @@ bypass techniques, then confirm the ATO leg in `/ato`.
 
 ---
 
-## Recon completion checklist — the gate before vuln hunting
+## Recon completion checklist — the minimum coverage, a hard floor
 
-Before you switch to exploitation, confirm each item is **DONE or explicitly N/A**. An unchecked box
-that matters is usually where the bug was hiding.
+Recon isn't "done" until this minimum coverage is met — every box is a hard floor, not optional.
+Confirm each item is **DONE or explicitly N/A**; an unchecked box that matters is usually where the
+bug was hiding. At minimum a well-made recon produces: **technology + WAF fingerprint** (B/B.1/B.2),
+**admin-panel discovery** (B.3/B.5), **all JS incl. chunks + source maps** (C/D/E), **hardcoded
+secrets** (G), **endpoint/path/param extraction** (F), and a **mandatory `/ffuf-skill` active pass**
+(F). Don't start vuln hunting with any of these missing.
 
 - [ ] **Tech stack identified** — language, framework, server, DB (B + B.2)
-- [ ] **WAF presence decided** — none / product named (B.1) → gates how hard you can run F
+- [ ] **WAF presence decided** — none assumed by default / product named (B.1); a WAF only *tunes* F's rate/payloads, never skips it
 - [ ] **Information-disclosure paths probed** — secrets / source / config / admin (B.3)
 - [ ] **Backup files & source leftovers probed** (B.4)
 - [ ] **All JS pulled** — `gau` + headless walk, **incl. webpack chunks (D) + source maps (E)**
 - [ ] **Endpoints & params extracted** from JS (F) → `paths.txt` / `endpoints.txt` / `params.txt`
+- [ ] **Active fuzz pass run** — `/ffuf-skill` executed on in-scope hosts (F); results saved. A detected WAF only *tunes* this (rate/payloads), never skips it
 - [ ] **Secrets grepped** in JS (G) — every hit triaged
 - [ ] **API docs found or CONFIRMED ABSENT** — Swagger / OpenAPI / WADL / GraphQL (B.3 + F)
 - [ ] **GraphQL introspected** (if present)
@@ -565,7 +574,7 @@ that matters is usually where the bug was hiding.
 | Recon output | Next |
 |---|---|
 | New live host (wildcard) | add to scope → B–J on it |
-| **WAF detected on a host (B.1)** | **throttle F `/ffuf-skill` per CLAUDE.md; evasion → `/waf-bypass`** |
+| **WAF detected on a host (B.1)** | **F `/ffuf-skill` still runs — adapted rate/payloads; evasion technique → `/waf-bypass`** |
 | **Source/config/secrets dump** — `/.env`, `/.git/config`, `/actuator/env`, `/actuator/heapdump`, `phpinfo` env, `/.aws`, `/.ssh`, `/web.config`, `.sql` dump (B.3) | capture response → chain → `/report-yeswehack` |
 | **Exposed Swagger / OpenAPI / WADL** (B.3) | mine endpoints (F); internal/admin endpoints → `/idor`, `/rbac` |
 | **GraphQL endpoint exposed** (B.3) | introspection → endpoint mining; broken authz → `/idor` |
@@ -596,6 +605,10 @@ A leaked secret or a valid leaked credential is **itself reportable** even befor
   in-scope hosts only; they are *targeted* checks, not brute force (that's `/ffuf-skill`). A 403 must
   be classified **WAF-vs-ACL** (B.1) before dispatching **B.5 → `/403-401`** — a WAF 403 goes to
   `/waf-bypass`, an app-ACL 403 to `/403-401` (then `/rbac`/`/idor` to confirm).
+- **ffuf always runs in recon (F); a WAF only tunes it.** Don't assume a WAF until B.1 detects one.
+  When one is present, keep running ffuf **and** the JS analysis — adapt the rate/payloads, never
+  abort or skip the step. Evasion *technique* (origin/infra bypass, payload obfuscation) lives in
+  `/waf-bypass`.
 - **Don't enumerate or exfiltrate at scale.** Proof, then stop.
 
 ---
@@ -638,6 +651,9 @@ jq -r '.sourcesContent[]' main.js.map > src_dump.js 2>/dev/null
 # F. endpoints + params
 ugrep -aErhoE '"(/[a-zA-Z0-9_./-]+)"' js/ | tr -d '"' | sort -u > paths.txt
 xnLinkFinder -i js/ -sp target.tld -spo -sf target.tld -o endpoints.txt -op params.txt
+# F. (MANDATORY) active fuzz — /ffuf-skill always runs in recon; a WAF only tunes rate/payloads, never skips it
+#    if B.1 found a WAF: lower -rate/-t + small wordlist + payload obfuscation — adapt, don't abort
+ffuf -w ~/wordlists/common.txt -u "https://app.target.tld/FUZZ" -ac -o ffuf_dirs.json
 
 # G. secrets
 ugrep -aErni -f .claude/skills/recon/secret-patterns.txt js/ > grep_hits.txt
