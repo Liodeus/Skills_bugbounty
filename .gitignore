@@ -11,3 +11,15 @@ playwright-chrome/configs/user*.json
 # Runtime logs
 /tmp/
 *.log
+
+# Secrets — never commit webhooks, API keys, or env files.
+# (The Discord webhook lives at ~/.config/hunt/discord-webhook.txt, outside the
+#  repo, but guard against any copy that lands inside the tree.)
+*webhook*
+*.webhook
+discord-webhook*
+.env
+.env.*
+*_api_key*
+*-secret*
+*secret*

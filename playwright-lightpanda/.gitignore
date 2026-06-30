@@ -1,0 +1,7 @@
+configs/
+state/
+lightpanda
+lightpanda-*
+*.cookies.json
+__pycache__/
+*.pyc
