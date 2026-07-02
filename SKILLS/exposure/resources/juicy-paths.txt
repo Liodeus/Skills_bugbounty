@@ -1,6 +1,6 @@
-# B.3 information-disclosure path list — one request each, classify the response.
+# /exposure information-disclosure path list — one request each, classify the response.
 # Blank lines and lines starting with # are skipped by the probe loop.
-# 2xx on a secrets/source path = reportable; swagger/graphql 200 -> feed F; 401/403 -> B.5.
+# 2xx on a secrets/source path = reportable; swagger/graphql 200 -> feed /ffuf-skill; 401/403 -> /403-401.
 # source control
 /.git/config
 /.git/HEAD

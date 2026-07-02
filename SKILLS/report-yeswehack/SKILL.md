@@ -23,35 +23,9 @@ Steps:
 1. Draft the full report content (form fields + body).
 2. Write it to the `.md` file using the Write tool.
 3. Tell Liodeus the file path so they can open it.
-4. **Fire the Discord alert** (below) so Liodeus gets a real-time ping that a finding landed.
+4. **Fire the finding alert** via [`/notify`](../notify/SKILL.md) — invoke it once the `.md` is written; that skill owns the alert command. One alert per confirmed finding (all four reporting gates in `CLAUDE.md` met: confirmed, in-scope, minimal PoC, concrete impact), never per draft or probe. Delivery is non-blocking — the finding is already saved in the `.md`, so never block reporting on the ping.
 
 Do not skip the file write step even if the report is short or "just a draft".
-
-### Step 4 — Discord alert on a confirmed finding
-
-Once the report is written, send **one** alert per confirmed finding (not per draft, not per probe —
-only when the four reporting gates in `CLAUDE.md` are met) via [`notify`](https://github.com/projectdiscovery/notify)
-(installed by `install.sh`; its Discord provider config lives at `~/.config/notify/provider-config.yaml`).
-`notify` takes the message on **stdin** (v1.0.7 has no inline `-msg` flag) — pipe a formatted finding
-block to it:
-
-```bash
-printf '🐛 Confirmed: IDOR on PATCH /api/v1/orders/{id} — cross-tenant order modification\nSeverity: High\nTarget: app.target.tld\nEndpoint: PATCH /api/v1/orders/{id} (id)\nReport: %s\n\nNo ownership check — any authed user reads/writes other tenants'\'' orders by incrementing id.' \
-  "$(pwd)/report_idor_api-target-com_2026-06-30.md" \
-  | notify -bulk -provider discord -id hunt
-```
-
-* **`-bulk` is mandatory — it's what makes the whole block ONE Discord message.** Without `-bulk`,
-  `notify` sends a separate message **per line** of stdin (a 6-line block → 6 messages). With `-bulk`,
-  the entire piped block goes as a single message (chunked only past the char-limit). Always pass
-  `-bulk`, never drop it. Keep the block under ~1900 chars (Discord's per-message limit) so it never
-  chunks: this is a *summary*, not the report — the full write-up lives in the `.md`; link its path,
-  don't paste the body.
-* `notify` reads its Discord webhook from `~/.config/notify/provider-config.yaml` (a secret —
-  gitignored, never committed). With only the `hunt` discord provider configured, the
-  `-provider discord -id hunt` flags are optional but explicit.
-* `notify` is non-blocking for reporting — if delivery fails (rate limit, bad config), the finding is
-  still saved in the `.md`. Re-run the command to resend.
 
 ---
 

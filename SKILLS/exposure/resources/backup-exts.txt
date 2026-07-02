@@ -1,4 +1,4 @@
-# B.4 backup/leftover extensions & affixes — appended to known file paths, one request each.
+# /exposure backup/leftover extensions & affixes — appended to known file paths, one request each.
 # Blank lines and # comments are skipped by the probe loop.
 # Appended verbatim to a base path, so both dotted (.bak) and dashed (-old) affixes work:
 #   base /config.php  +  .bak  -> /config.php.bak

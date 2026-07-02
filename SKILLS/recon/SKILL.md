@@ -17,8 +17,8 @@ headless browser. Subdomains come from `/profundis`; **active content/param fuzz
 `/ffuf-skill` — always invoked in recon (step F), WAF or not**. Nothing else.
 
 This skill runs, in order: **(A) subdomains** (wildcard only) → **(B) map & probe the host surface**
-(fingerprint frameworks → **B.1** WAF → **B.2** force errors → **B.3** information disclosure →
-**B.4** backup files → **B.5** 401/403 → `/403-401`) → **(C) discover all JS** → **(D) enumerate webpack
+(fingerprint frameworks → **B.1** WAF → **B.2** force errors → **B.3–B.4** unauth exposure →
+`/exposure` → **B.5** 401/403 → `/403-401`) → **(C) discover all JS** → **(D) enumerate webpack
 chunks** → **(E) source maps** → **(F) extract endpoints** → **(G) secrets** →
 **(H) postMessage handlers** → **(I) DOM sinks** → **(J) hidden params**, then the
 **recon completion checklist** gates the move to exploitation. Steps H–J feed `/xss`.
@@ -47,6 +47,46 @@ digraph recon {
 
 ---
 
+## Working directory layout — one clean folder per host
+
+**Every host gets its own self-contained folder. Never write recon artifacts flat into the workspace root** — on a multi-host (wildcard) scope that silently overwrites one host's `index.html`/`js/`/`ffuf.json` with the next host's. Keep each host isolated so findings stay correlated and nothing collides.
+
+The `hunt.sh` workspace (`<target>/`, already per-target) is the root. Inside it:
+
+```
+<target>/                    # workspace (per target) — you start here
+├─ scope.txt                 # A's host list + cross-host notes (workspace root)
+└─ hosts/
+   ├─ app.target.com/        # one folder per host — all of B–J lands here
+   │  ├─ index.html  headers.txt
+   │  ├─ js/                  # every fetched bundle (C–E)
+   │  ├─ endpoints.txt        # F
+   │  ├─ secrets.txt          # G  (grep hits)
+   │  ├─ ffuf.json            # F/active fuzz
+   │  ├─ postmessage_hits.txt # H
+   │  ├─ dom_hits.txt         # I
+   │  └─ notes.md             # per-host running notes / assumptions
+   └─ api.target.com/ …
+```
+
+**Before running B–J for a host, create and enter its folder** so every relative path in the steps below is automatically scoped to that host:
+
+```bash
+WS="$PWD"                                                 # workspace root — pin it before cd
+RES="$WS/.claude/skills/recon"                            # wordlists live here (secret-patterns.txt, dom-sinks.txt, …)
+HOST='app.target.com'                                     # bare host, no scheme
+host_slug=$(printf '%s' "$HOST" | sed 's#^https\?://##; s#[:/].*##; s#[^A-Za-z0-9._-]#_#g')
+mkdir -p "$WS/hosts/$host_slug" && cd "$WS/hosts/$host_slug"   # all B–J artifacts now land here
+# … run B–J …
+cd "$WS"                                                  # back to workspace root before the next host
+```
+
+**Path caveat:** the B–J command snippets below reference wordlists as `.claude/skills/recon/…` (relative to the workspace root). Once you `cd` into a host folder, reference them via **`$RES/…`** instead (e.g. `ugrep -f "$RES/secret-patterns.txt" js/`) — the resources are two levels up, not in the host folder. Everything the host commands *write* (`index.html`, `js/`, `*.txt`, `ffuf.json`) stays relative = inside `hosts/<host>/`.
+
+Report files (`/report-yeswehack`) still go where that skill puts them (workspace root by default); recon artifacts stay under `hosts/<host>/`. **The completion checklist below is per host** — clear it for each host's folder.
+
+---
+
 ## A. Subdomain discovery — wildcard scope only
 
 **Use `/profundis`. Do not run subdomain-enumeration tools** (no subfinder, amass, httpx, etc.).
@@ -57,7 +97,7 @@ estimate-first** before `subdomains` enumeration so you don't drain the wallet. 
 (`dns` search, `type:CNAME`) for subdomain-takeover candidates — but only report a takeover with
 the dangling DNS record *actually present* (see CLAUDE.md always-ignore).
 
-Take the in-scope hosts `/profundis` returns, add them to your scope/target list, run B–J per host.
+Take the in-scope hosts `/profundis` returns, write them to `scope.txt` at the workspace root, then run B–J per host — **each inside its own `hosts/<host>/` folder** (see *Working directory layout* above).
 
 ---
 
@@ -162,81 +202,26 @@ curl -sk -D - "$BASE/api" -X POST -H 'Content-Type: application/json' -d '{' | h
 
 **Triage:** a framework/version name alone is **noise — don't report it** (CLAUDE.md). But an error
 that leaks **absolute file paths, SQL/queries, internal hostnames, env-var names, source snippets, or
-a `DEBUG=True` page** is reportable information disclosure — capture the response and treat it like a
-B.3 hit. This step mainly sharpens the fingerprint.
+a `DEBUG=True` page** is reportable information disclosure — capture the response and hand it to
+`/exposure` (B.3–B.4) as an exposure hit. This step mainly sharpens the fingerprint.
 
 **WAF note:** if B.1 flagged a WAF, a malformed probe may hit the WAF's block page (403/406) instead
 of the app's error handler — read the body to tell a WAF block from a real app error, and throttle.
 
-### B.3 — Information disclosure: probe known juicy paths
+### B.3–B.4 — Unauthenticated exposure → `/exposure`
 
-A fixed, high-signal list of paths that commonly leak source, config, secrets, debug info, or API
-docs. This is **targeted probing of a curated known-path list — not brute force** (brute force is `/ffuf-skill`).
-One request each, classify the response, flag the juicy ones.
+The zero-credential discovery pass — curated juicy-path probing (source/config/secrets, VCS,
+Swagger/GraphQL, admin panels, actuators) and the backup/source-leftover extension matrix + open
+autoindex — lives in **`/exposure`** now. **Call it here** as a required sub-skill: recon
+**recognizes** the mapping phase needs unauth-exposure coverage and **dispatches**; the technique
+depth, the curated lists (`juicy-paths.txt`, `backup-exts.txt`), the `.git`/`.svn` reconstruction,
+and the baseline-first triage all live in the skill (mirroring how B.5 dispatches to `/403-401`).
 
-The path list is shipped as `resources/juicy-paths.txt` (grouped by category; `#` comments and
-blank lines are skipped by the probe loop) — edit that file to tune the list, not the snippet.
-
-```bash
-BASE="https://app.target.tld"
-# one curl per path; print "status size\t path"; #comment + blank lines are skipped by the guard
-while read -r p; do
-  [[ -z "$p" || "$p" =~ ^[[:space:]]*# ]] && continue
-  printf '%s\t%s\n' "$(curl -sk -o /dev/null -w '%{http_code} %{size_download}' "$BASE$p")" "$p"
-done < .claude/skills/recon/resources/juicy-paths.txt
-# (symlinked at .claude/skills/recon/ in a workspace; adjust the path if run elsewhere)
-```
-
-Classify the response (mirrors G's "a hit is a lead, not a finding" triage):
-- **200/2xx on a secrets/source path** — `/.env`, `/.git/config`, `/config.php`, `/wp-config.php`,
-  `/web.config` (with keys), `/application.yml` / `/appsettings.json` (with secrets), `/actuator/env`,
-  `/actuator/heapdump`, `/phpinfo.php` (with env/vars), `/.aws/credentials`, `/.ssh/id_rsa` →
-  **reportable information disclosure**. Capture the response, then report (chain where it leads).
-  `/.git/config` + `/.git/HEAD` readable → reconstruct full source with a `git-dumper`-style pull.
-- **Swagger / OpenAPI / WADL / GraphQL returns 200** → feed the endpoints into **F**; GraphQL →
-  introspection (`{"query":"{__schema{types{name,fields{name}}}}"}`); internal/admin endpoints the
-  spec reveals → hand to `/idor`, `/rbac`.
-- **Admin panel 200 unauth** → `/rbac` (vertical) / try default creds → `/ato`.
-- **401/403 on a juicy path** (admin, actuator, api) → that's an access gate → dispatch to **`/403-401`** (B.5).
-- **404 / generic landing page** → absent; move on.
-- A **bare `X-Powered-By` / `Server` version** leaked here = **noise, do not report** (CLAUDE.md).
-
-**WAF note:** probe sequentially, low rate. A uniform 403 across *every* path is an edge/WAF block,
-not 404s — distinguish it before reading anything into the statuses.
-
-### B.4 — Backup files & source leftovers
-
-Append common backup extensions/affixes to discovered file paths and common names, one request each,
-flag the 2xx hits, download and inspect. Cheap matrix over paths you already know.
-
-The extension/affix list is shipped as `resources/backup-exts.txt`.
-
-```bash
-BASE="https://app.target.tld"
-mapfile -t exts < <(grep -vE '^\s*#|^\s*$' .claude/skills/recon/resources/backup-exts.txt)
-# candidate bases: common names + parent dirs of paths discovered in F (paths.txt)
-mapfile -t bases < <(printf '%s\n' /index.php /api /config.php /backup /db /dump /admin \
-                              "$(sed 's#\(.*\)/.*#\1#' paths.txt 2>/dev/null | sort -u)")
-for b in "${bases[@]}"; do
-  for e in "${exts[@]}"; do
-    read -r code sz < <(curl -sk -o /dev/null -w '%{http_code} %{size_download}' "$BASE$b$e")
-    [[ "$code" =~ ^2 ]] && (( ${sz:-0} > 0 )) && printf '%s %s %s%s\n' "$code" "$sz" "$b" "$e"
-  done
-done
-```
-
-**Reportable:** a `.sql` / `.zip` / `.tar.gz` / `.7z` of the app source or a DB dump = source or PII.
-`.swp` / `.swo` (vim) and editor `~` leftovers may carry partial source/secrets. (`.git` source
-control is already covered in B.3.)
-
-Also probe likely directories for **open autoindex** (nginx `autoindex on`, Apache
-`Options +Indexes`) — an open listing hands you filenames to grab:
-
-```bash
-for d in /backup/ /backups/ /old/ /archive/ /tmp/ /dist/ /static/ /uploads/; do
-  curl -sk "$BASE$d" | ugrep -iE 'Index of|Directory listing' && echo "AUTOINDEX: $d"
-done
-```
+Hand `/exposure` the host folder and the discovered paths (`paths.txt` from F). It routes what it
+finds: a **gated** juicy path (`401`/`403`) → `/403-401`; a resource leaking **another user's** data
+via a predictable ID → `/idor`; a **default-cred** login panel → `/ato`; **unknown paths to
+discover** → `/ffuf-skill`. A `2xx` on a secrets/source path (`.env`, `.git`, `actuator/env`,
+`actuator/heapdump`, `.aws`) is reportable info disclosure — chain the secret, then report.
 
 ### B.5 — 401/403 access-control bypass → `/403-401`
 
@@ -491,28 +476,28 @@ bypass techniques, then confirm the ATO leg in `/ato`.
 Recon isn't "done" until this minimum coverage is met — every box is a hard floor, not optional.
 Confirm each item is **DONE or explicitly N/A**; an unchecked box that matters is usually where the
 bug was hiding. At minimum a well-made recon produces: **technology + WAF fingerprint** (B/B.1/B.2),
-**admin-panel discovery** (B.3/B.5), **all JS incl. chunks + source maps** (C/D/E), **hardcoded
+a **`/exposure` unauth-discovery pass** (B.3–B.4) + **401/403 gate dispatch** (B.5), **all JS incl. chunks + source maps** (C/D/E), **hardcoded
 secrets** (G), **endpoint/path/param extraction** (F), and a **mandatory `/ffuf-skill` active pass**
 (F). Don't start vuln hunting with any of these missing.
 
 - [ ] **Tech stack identified** — language, framework, server, DB (B + B.2)
 - [ ] **WAF presence decided** — none assumed by default / product named (B.1); a WAF only *tunes* F's rate/payloads, never skips it
-- [ ] **Information-disclosure paths probed** — secrets / source / config / admin (B.3)
-- [ ] **Backup files & source leftovers probed** (B.4)
+- [ ] **`/exposure` pass run** (B.3–B.4) — juicy paths (secrets/source/config/admin), backup/leftover matrix, autoindex, VCS/actuator/API-docs — dispatched to the skill
 - [ ] **All JS pulled** — `gau` + headless walk, **incl. webpack chunks (D) + source maps (E)**
 - [ ] **Endpoints & params extracted** from JS (F) → `paths.txt` / `endpoints.txt` / `params.txt`
 - [ ] **Active fuzz pass run** — `/ffuf-skill` executed on in-scope hosts (F); results saved. A detected WAF only *tunes* this (rate/payloads), never skips it
 - [ ] **Secrets grepped** in JS (G) — every hit triaged
-- [ ] **API docs found or CONFIRMED ABSENT** — Swagger / OpenAPI / WADL / GraphQL (B.3 + F)
+- [ ] **API docs found or CONFIRMED ABSENT** — Swagger / OpenAPI / WADL / GraphQL (`/exposure` + F)
 - [ ] **GraphQL introspected** (if present)
-- [ ] **Admin / panel locations tested** + 401/403 gate dispatched where blocked → **`/403-401`** (B.5)
+- [ ] **Admin / panel locations tested** (`/exposure`) + 401/403 gate dispatched where blocked → **`/403-401`** (B.5)
 - [ ] **HTTP methods tested** on key endpoints (→ **`/403-401`**)
-- [ ] **robots.txt + sitemap.xml reviewed** for endpoint hints (B.3 already pulls them)
+- [ ] **robots.txt + sitemap.xml reviewed** for endpoint hints (`/exposure` juicy-paths pulls them)
 - [ ] **postMessage handlers** triaged (H) → sink-reached ones → `/xss`
 - [ ] **DOM sinks** mapped (I) → source-flow ones → `/xss`
 - [ ] **Hidden params** reflection-probed (J) → reflecting ones → `/xss`
 - [ ] **Auth flows captured** — session cookie / token per identity (unauth / user1 / user2), headers logged
 - [ ] **All findings saved** to working files (requests / responses) — system of record
+- [ ] **Per-host folder clean** — every artifact above lives under `hosts/<host>/` (nothing flat in the workspace root); on a wildcard scope this checklist is cleared **once per host**, and `scope.txt` lists all hosts covered
 
 ---
 
@@ -522,12 +507,12 @@ secrets** (G), **endpoint/path/param extraction** (F), and a **mandatory `/ffuf-
 |---|---|
 | New live host (wildcard) | add to scope → B–J on it |
 | **WAF detected on a host (B.1)** | **F `/ffuf-skill` still runs — adapted rate/payloads; evasion technique → `/waf-bypass`** |
-| **Source/config/secrets dump** — `/.env`, `/.git/config`, `/actuator/env`, `/actuator/heapdump`, `phpinfo` env, `/.aws`, `/.ssh`, `/web.config`, `.sql` dump (B.3) | capture response → chain → `/report-yeswehack` |
-| **Exposed Swagger / OpenAPI / WADL** (B.3) | mine endpoints (F); internal/admin endpoints → `/idor`, `/rbac` |
-| **GraphQL endpoint exposed** (B.3) | introspection → endpoint mining; broken authz → `/idor` |
-| **Admin panel exposed unauth / default creds** (B.3) | `/rbac`, `/ato` |
+| **Source/config/secrets dump** — `/.env`, `/.git/config`, `/actuator/env`, `/actuator/heapdump`, `phpinfo` env, `/.aws`, `/.ssh`, `/web.config`, `.sql` dump (`/exposure`) | capture response → chain → `/report-yeswehack` |
+| **Exposed Swagger / OpenAPI / WADL** (`/exposure`) | mine endpoints (F); internal/admin endpoints → `/idor`, `/rbac` |
+| **GraphQL endpoint exposed** (`/exposure`) | introspection → endpoint mining; broken authz → `/idor` |
+| **Admin panel exposed unauth / default creds** (`/exposure`) | `/rbac`, `/ato` |
 | **401/403 gate** — **`/403-401`** opens it (403→200 real content) | **`/rbac` or `/idor`** — cross-account confirm there |
-| **Backup/archive exposing source or PII** (B.4) | `/report-yeswehack` |
+| **Backup/archive exposing source or PII** (`/exposure`) | `/report-yeswehack` |
 | Endpoint / hidden route / param | `/idor`, `/rbac`, `/ssrf`, `/sql`, `/ssti`, `/xxe` |
 | **DOM sink with source flow** | **`/xss`** |
 | **Origin-less postMessage handler → sink** | **`/xss`** |
@@ -565,5 +550,6 @@ A leaked secret or a valid leaked credential is **itself reportable** even befor
 The complete copy/paste command cheat sheet for the whole A→J pass lives in
 **[`resources/COMMANDS.md`](resources/COMMANDS.md)** — open it when you want the raw commands
 without the per-step reasoning above. It reads the shipped lists (`secret-patterns.txt`,
-`dom-sinks.txt`, `postmessage-handlers.txt`, `resources/juicy-paths.txt`,
-`resources/backup-exts.txt`), so the SKILL.md flow and the cheat sheet never drift.
+`dom-sinks.txt`, `postmessage-handlers.txt`); the unauth-exposure lists (`juicy-paths.txt`,
+`backup-exts.txt`) moved to `/exposure`, where B.3–B.4 now dispatch. The SKILL.md flow and the
+cheat sheet never drift.

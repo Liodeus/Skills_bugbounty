@@ -45,7 +45,7 @@ workflow** below (recon → XSS + SSRF → pivot gate → rest or next target).
 1. **Mass PII leakage** — names, emails, phones, addresses, DOBs, SSNs, financial data of users who aren't you. Most programs treat mass PII as **critical, full stop**.
 2. **Authentication bypass / Account Takeover** — taking over another user's account end-to-end.
 3. **Business Logic Vulnerabilities** — workflow bypass, payment manipulation, privilege abuse through intended features, trust-boundary violations. Highest bounty-per-find ratio; AI scanners have near-zero detection rate.
-4. **Broken Access Control (IDOR / RBAC)** — cross-user object access, cross-tenant data, vertical privilege escalation. #1 rewarded class on HackerOne; AI-generated code systematically misses authorization logic.
+4. **Broken Access Control (IDOR / RBAC / unauthenticated exposure)** — cross-user object access, cross-tenant data, vertical privilege escalation (`/idor`, `/rbac`), plus **zero-credential exposure** of sensitive files/panels/APIs (`/exposure` — forced browsing, backups, VCS, config/secrets, unauth admin & actuators). #1 rewarded class on HackerOne; AI-generated code systematically misses authorization logic.
 5. **Cross-Site Scripting (XSS)** — stored in admin/cross-tenant context (session theft, admin action); reflected that chains to ATO or admin. Highest volume bug class; always probe for chain potential even when standalone value is low.
 6. **Server-Side Request Forgery (SSRF)** — especially with cloud metadata or internal service access.
 7. **Remote Code Execution** — the holy grail; rare; usually a chain.
@@ -56,6 +56,8 @@ workflow** below (recon → XSS + SSRF → pivot gate → rest or next target).
 * Blind SSRF without internal access proven (still medium-high)
 * CSRF on impactful state-changing actions
 * Open redirects that chain into OAuth / SAML callbacks
+* Web cache poisoning / cache deception (`/cache-poisoning`) — promotes a self-only reflection to mass/persistent impact, or leaks another user's cached page; high when it chains to mass XSS or PII
+* Cross-site leaks (`/xs-leaks`) — usually medium (single-bit state oracle); high when it deanonymizes, leaks admin/role, or XS-Search reconstructs private data
 
 ## Hunting workflow — the order you actually execute
 
@@ -64,8 +66,9 @@ bug-bounty payouts come from the cheap, high-volume classes that recon hands you
 
 1. **Recon first — always, and done well.** Invoke `/recon` and clear its **full minimum coverage**
    (recon's completion checklist is a hard floor, not a wish-list): technology + WAF fingerprint,
-   admin-panel discovery, **all** JS (incl. webpack chunks + source maps), hardcoded secrets,
-   endpoint/param extraction, DOM sinks / `postMessage` / hidden params, and a **mandatory
+   a **mandatory `/exposure` pass** (unauth discovery — juicy paths / backups / VCS / admin panels /
+   actuators, which recon dispatches to), **all** JS (incl. webpack chunks + source maps), hardcoded
+   secrets, endpoint/param extraction, DOM sinks / `postMessage` / hidden params, and a **mandatory
    `/ffuf-skill` active pass**. Wildcard scope → subdomains via `/profundis` first. Recon is not
    "done" with any of those missing.
 2. **Absolute priority — XSS + SSRF.** Immediately after recon, hunt these **before every other
@@ -295,7 +298,7 @@ A single primitive is rarely the bounty. Chain:
 * **No exfiltration of customer data.** Capture proof (1 record, your own user where possible, or hash/length of sensitive data) and stop.
 * **No social engineering of program staff** unless the program explicitly allows it.
 * **No mass email / phishing tests** — even simulated — unless explicitly in scope.
-* **Keep a record.** Save the request + response of every meaningful test and PoC to your working files so it's reproducible; don't fire requests whose result you don't record. When a technique needs another tool (race bursts, `sqlmap`, `ffuf`), save its output too — the saved files are the system of record.
+* **Keep a record — one clean folder per host.** Save the request + response of every meaningful test and PoC to your working files so it's reproducible; don't fire requests whose result you don't record. When a technique needs another tool (race bursts, `sqlmap`, `ffuf`), save its output too — the saved files are the system of record. **Organize per host: every scan/recon artifact lives under `hosts/<host>/` in the target workspace — never flat in the root** (on a wildcard scope that silently overwrites one host's files with the next). `/recon` owns the exact layout.
 * **Respect rate limits.** If the program has documented limits, stay below them. If not, stay under 10 req/s on production endpoints.
 * **Don't assume a WAF; if one shows up, adapt — never abort.** Default stance: no WAF. Detect it passively (read the responses you already fetched) and react only if one actually appears (403/406/451 patterns, block page, WAF fingerprint). When it does, **keep running the tests** — ffuf, JS analysis, payload iteration — just adapted: lower rate/concurrency, smaller targeted wordlist, obfuscated payloads; watch for the block status and back off if rate-limited. Never *skip* ffuf or a technique solely because a WAF exists. **`/ffuf-skill` always runs in the recon phase (`/recon` step F); a WAF only tunes its rate/payloads.** Evasion *technique* (origin/infra bypass, payload obfuscation) lives in `/waf-bypass` for when an adapted pass keeps getting blocked. (Blind unadapted fuzzing behind a WAF burns the engagement and trips IP bans — the rule is *adapt*, not brute-force-headlong.)
 * **Accidental impact → pause that stream, document, then resume elsewhere; never freeze the hunt.** Triggers only on **objective** impact: a *sustained* 5xx on a previously-healthy endpoint, an action that actually mutated/deleted real data, or a response indicating a real outage. A single transient 5xx, slowness, a redirect, or a valid-but-unexpected response is **not** impact — keep going. When real impact occurs: stop sending *that* request type, write down what happened (request/response/time), revert the change if it's safe (see *Never modify data without revert*), then **resume hunting a different vector**. Never try to "clean up" the broken endpoint with more requests, and never freeze-and-wait. This guardrail protects against *compounding* an accident — not against continuing.
@@ -310,7 +313,7 @@ Some bugs (account-deletion IDORs, mass-email triggers, payment endpoints) have 
 
 ## Reporting
 
-Invoke `/report-yeswehack` as soon as a finding is confirmed. The skill owns structure, CVSS, and file output — do not replicate its logic here. **It also fires a Discord alert** via [`notify`](https://github.com/projectdiscovery/notify) (installed by `install.sh`; provider config at `~/.config/notify/provider-config.yaml`) the moment a finding is written, so you see confirmed bugs land in real time. One alert per confirmed finding, never per probe.
+Invoke `/report-yeswehack` as soon as a finding is confirmed. The skill owns structure, CVSS, and file output — do not replicate its logic here. Once the report `.md` is written, it hands off to **`/notify`**, which fires a real-time Discord alert so you see confirmed bugs land the moment they're saved. `/notify` owns the alert mechanics (the `notify` command, `-bulk`, the provider config) — invoke it, don't inline it. One alert per confirmed finding, never per probe.
 
 ### Invoke when ALL four gates are met
 
@@ -333,8 +336,11 @@ Invoke `/report-yeswehack` as soon as a finding is confirmed. The skill owns str
 | SQL / NoSQL injection | `/sql` | `/report-yeswehack` |
 | SSTI | `/ssti` | `/report-yeswehack` |
 | XXE | `/xxe` | `/report-yeswehack` |
+| Web cache poisoning / cache deception / CPDoS | `/cache-poisoning` | `/report-yeswehack` |
+| Cross-site leaks (XS-Leaks / XS-Search) | `/xs-leaks` | `/report-yeswehack` |
 | RCE chain | `/rce` | `/report-yeswehack` |
 | RBAC / priv-esc | `/rbac` | `/report-yeswehack` |
+| Unauthenticated exposure (forced browsing / backups / VCS / config / unauth admin & APIs) | `/exposure` | `/report-yeswehack` |
 | 401/403 access-control bypass | `/403-401` (→ `/rbac`/`/idor` to confirm) | `/report-yeswehack` |
 | Leaked credentials (breach / infostealer) | `/credential-leaks` | `/report-yeswehack` |
 | WAF bypass chained with vuln | `/waf-bypass` → underlying skill | `/report-yeswehack` |
@@ -375,8 +381,9 @@ Skills auto-surface from their `description:` triggers — invoke the matching o
 * **Start every engagement with `/recon`** (full minimum coverage). Then hunt **`/xss` (reflected + DOM + blind where a storage/admin surface exists) and `/ssrf` first** — absolute priority, before the heavier vuln skills. Only continue to `/idor`, `/rbac`, `/ato`, `/business-logic`, `/csrf`, `/sql`, `/ssti`, `/xxe`, `/rce` if you have an account (or self-signup) **or** recon showed clear potential for them; otherwise pivot to the next target. An obvious crit (escape hatch) overrides this and is chased immediately.
 * `/recon` reuses `/credential-leaks` (breach DBs + infostealer logs via OathNet) — when it surfaces valid creds for the target, validate them through `/credential-leaks` and, if they grant access, pivot into `/ato`/`/rbac`/`/idor` for impact. A validated leaked credential with account access is reportable on its own.
 * Chain `/waf-bypass` into the underlying-vuln skill — never report a bypass alone.
+* `/recon` dispatches unauthenticated-exposure discovery (juicy paths / backups / VCS / admin panels / actuators, B.3–B.4) to `/exposure`. From an `/exposure` hit: a **gated** path (`401`/`403`) → `/403-401`; a resource leaking another user's data via a predictable ID → `/idor`; a role-gated function → `/rbac`; a **default-cred** login panel → `/ato`; unknown paths to discover → `/ffuf-skill`. A `2xx` on a secrets/source path (`.env`, `.git`, `actuator/env`/`heapdump`, `.aws`) is reportable on its own — chain the secret first.
 * Hit a `401/403` on a gated path → `/403-401`; a confirmed `403→200` flip → confirm cross-user in `/rbac`/`/idor`.
-* Invoke `/report-yeswehack` only once all four reporting gates are met (confirmed, in-scope, PoC, impact).
+* Invoke `/report-yeswehack` only once all four reporting gates are met (confirmed, in-scope, PoC, impact). Once it writes the report `.md`, fire **`/notify`** to alert the finding — one alert per confirmed finding, never per probe.
 
 ---
 

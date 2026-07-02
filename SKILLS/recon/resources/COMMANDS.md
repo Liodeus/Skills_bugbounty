@@ -3,7 +3,8 @@
 Copy/paste reference for the whole A→J recon flow. The per-step *reasoning* (what each output
 means, when to branch, how a WAF tunes things) lives in `SKILL.md`; this file is just the commands.
 Shipped raw lists live alongside the skill: `secret-patterns.txt`, `dom-sinks.txt`,
-`postmessage-handlers.txt`, and `resources/juicy-paths.txt` / `resources/backup-exts.txt`.
+`postmessage-handlers.txt`. The unauth-exposure lists (`juicy-paths.txt`, `backup-exts.txt`) moved
+to `/exposure` — B.3–B.4 dispatch there.
 
 ```bash
 # A. (wildcard only) subdomains → invoke /profundis (no local tools). Add returned hosts to scope.
@@ -20,25 +21,9 @@ curl -sk -o /dev/null -w '%{http_code}' "https://app.target.tld/?id='%20OR%201=1
 # B.2 force errors to fingerprint (read framework/stack from error pages; version-only = noise)
 for p in "/%00" "/__nope__" "/?id='" ; do curl -sk -D - "https://app.target.tld$p" | head -n 20; done
 
-# B.3 information disclosure — probe resources/juicy-paths.txt (curated known-path list)
-BASE="https://app.target.tld"
-while read -r p; do
-  [[ -z "$p" || "$p" =~ ^[[:space:]]*# ]] && continue
-  printf '%s\t%s\n' "$(curl -sk -o /dev/null -w '%{http_code} %{size_download}' "$BASE$p")" "$p"
-done < .claude/skills/recon/resources/juicy-paths.txt
-#    2xx on a secrets/source path = reportable; swagger/graphql 200 → feed F; 401/403 → B.5
-
-# B.4 backup files — append resources/backup-exts.txt to known paths; flag 2xx; check /backup/ /old/ for autoindex
-mapfile -t exts < <(grep -vE '^\s*#|^\s*$' .claude/skills/recon/resources/backup-exts.txt)
-mapfile -t bases < <(printf '%s\n' /index.php /api /config.php /backup /db /dump /admin \
-                              "$(sed 's#\(.*\)/.*#\1#' paths.txt 2>/dev/null | sort -u)")
-for b in "${bases[@]}"; do for e in "${exts[@]}"; do
-  read -r code sz < <(curl -sk -o /dev/null -w '%{http_code} %{size_download}' "$BASE$b$e")
-  [[ "$code" =~ ^2 ]] && (( ${sz:-0} > 0 )) && printf '%s %s %s%s\n' "$code" "$sz" "$b" "$e"
-done; done
-for d in /backup/ /backups/ /old/ /archive/ /tmp/ /dist/ /static/ /uploads/; do
-  curl -sk "$BASE$d" | ugrep -iE 'Index of|Directory listing' && echo "AUTOINDEX: $d"
-done
+# B.3–B.4 unauthenticated exposure → invoke /exposure (curated juicy paths + backup matrix +
+#    autoindex + VCS/actuator/API-docs; baseline-first triage; git/svn reconstruction). Hand it
+#    paths.txt + the host folder. Gated path → /403-401; predictable-ID leak → /idor; default-cred → /ato.
 
 # B.5 401/403 gate → invoke /403-401 (identity/path/URL-override/method set, WAF-vs-ACL triage); confirmed flip → /rbac or /idor
 
