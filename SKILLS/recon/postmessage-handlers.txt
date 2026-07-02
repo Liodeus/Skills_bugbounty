@@ -6,6 +6,8 @@
 # A — message receivers: where cross-origin data enters the page context
 addEventListener\s*\(\s*["'`]message["'`]
 \bonmessage\b
+\.onmessage\s*=
+\.onmessageerror\s*=
 attachEvent\s*\(\s*["'`]onmessage["'`]
 new\s+MessageChannel\s*\(
 new\s+MessagePort\s*\(
@@ -14,15 +16,28 @@ new\s+MessagePort\s*\(
 new\s+BroadcastChannel\s*\(
 new\s+SharedWorker\s*\(
 
-# B — message senders: postMessage calls; always read the targetOrigin second argument
+# B — browser extension messaging: cross-context receivers and senders
+(chrome|browser)\.runtime\.onMessage(External)?\b
+(chrome|browser)\.runtime\.onConnect(External)?\b
+\.onMessage\.addListener\s*\(
+(chrome|browser)\.runtime\.sendMessage\s*\(
+(chrome|browser)\.tabs\.sendMessage\s*\(
+
+# C — message senders: postMessage calls; always read the targetOrigin second argument
 \.postMessage\s*\(
 \bpostMessage\s*\(
 webkitPostMessage\s*\(
+(parent|top|opener|self|frames)\s*\.\s*postMessage\s*\(
+\.contentWindow\s*\.\s*postMessage\s*\(
+\.source\s*\.\s*postMessage\s*\(
 \.postMessage\s*\([^)]*,\s*["'`]\*["'`]
 targetOrigin\s*:\s*["'`]\*["'`]
+\.postMessage\s*\([^)]*,\s*["'`]https?:
 
-# C — origin and source validation markers: confirm a guard is present
+# D — origin and source validation markers: confirm a guard is present
 (event|e|msg|message|evt|d)\.(origin|source)
 \.origin\s*(===|!==|==|!=|&&|\|\|)
-\.origin\.(indexOf|includes|match|startsWith|endsWith)\s*\(
+\.origin\.(indexOf|includes|match|test|search|startsWith|endsWith)\s*\(
+(verify|check|validate|is)(Valid)?Origin\s*\(
+(allowed|trusted|whitelist(ed)?|valid)Origins?\b
 \.isTrusted

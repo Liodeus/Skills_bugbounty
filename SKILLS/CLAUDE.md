@@ -325,8 +325,10 @@ Invoke `/report-yeswehack` as soon as a finding is confirmed. The skill owns str
 |---|---|---|
 | IDOR / BOLA | `/idor` | `/report-yeswehack` |
 | ATO / auth bypass | `/ato` | `/report-yeswehack` |
+| Business logic / workflow abuse | `/business-logic` | `/report-yeswehack` |
 | XSS (reflected / stored / DOM) | `/xss` | `/report-yeswehack` |
 | Blind XSS | `/bxss` | `/report-yeswehack` |
+| CSRF (impactful state-change) | `/csrf` | `/report-yeswehack` |
 | SSRF | `/ssrf` | `/report-yeswehack` |
 | SQL / NoSQL injection | `/sql` | `/report-yeswehack` |
 | SSTI | `/ssti` | `/report-yeswehack` |
@@ -334,6 +336,7 @@ Invoke `/report-yeswehack` as soon as a finding is confirmed. The skill owns str
 | RCE chain | `/rce` | `/report-yeswehack` |
 | RBAC / priv-esc | `/rbac` | `/report-yeswehack` |
 | 401/403 access-control bypass | `/403-401` (→ `/rbac`/`/idor` to confirm) | `/report-yeswehack` |
+| Leaked credentials (breach / infostealer) | `/credential-leaks` | `/report-yeswehack` |
 | WAF bypass chained with vuln | `/waf-bypass` → underlying skill | `/report-yeswehack` |
 
 ### Artifacts to pass to `/report-yeswehack`
@@ -369,7 +372,8 @@ Do not modify this CLAUDE.md per-program — modify the per-program memory.
 ## Skill triggers
 
 Skills auto-surface from their `description:` triggers — invoke the matching one the moment its signal appears; don't reason from scratch when a skill exists. The only sequencing rules the descriptions can't express:
-* **Start every engagement with `/recon`** (full minimum coverage). Then hunt **`/xss` (reflected + DOM + blind where a storage/admin surface exists) and `/ssrf` first** — absolute priority, before the heavier vuln skills. Only continue to `/idor`, `/rbac`, `/ato`, `/sql`, `/ssti`, `/xxe`, `/rce` if you have an account (or self-signup) **or** recon showed clear potential for them; otherwise pivot to the next target. An obvious crit (escape hatch) overrides this and is chased immediately.
+* **Start every engagement with `/recon`** (full minimum coverage). Then hunt **`/xss` (reflected + DOM + blind where a storage/admin surface exists) and `/ssrf` first** — absolute priority, before the heavier vuln skills. Only continue to `/idor`, `/rbac`, `/ato`, `/business-logic`, `/csrf`, `/sql`, `/ssti`, `/xxe`, `/rce` if you have an account (or self-signup) **or** recon showed clear potential for them; otherwise pivot to the next target. An obvious crit (escape hatch) overrides this and is chased immediately.
+* `/recon` reuses `/credential-leaks` (breach DBs + infostealer logs via OathNet) — when it surfaces valid creds for the target, validate them through `/credential-leaks` and, if they grant access, pivot into `/ato`/`/rbac`/`/idor` for impact. A validated leaked credential with account access is reportable on its own.
 * Chain `/waf-bypass` into the underlying-vuln skill — never report a bypass alone.
 * Hit a `401/403` on a gated path → `/403-401`; a confirmed `403→200` flip → confirm cross-user in `/rbac`/`/idor`.
 * Invoke `/report-yeswehack` only once all four reporting gates are met (confirmed, in-scope, PoC, impact).

@@ -20,14 +20,19 @@ createContextualFragment\s*\(
 new\s+DOMParser\s*\(
 \.parseFromString\s*\(
 \.setHTML\s*\(
+\.setHTMLUnsafe\s*\(
 \.innerHTML\b
 \.insertAdjacentText\s*\(
+\.outerText\s*=
 
 # --- Code execution ---
 \beval\s*\(
 new\s+Function\s*\(
 \bFunction\s*\(\s*["'`]
+\bGeneratorFunction\s*\(
+\bAsyncFunction\s*\(
 \.constructor\s*\(\s*["'`]
+\bwindow\s*\[\s*["'`]eval
 \bsetTimeout\s*\(\s*["'`]
 \bsetInterval\s*\(\s*["'`]
 \bsetImmediate\s*\(\s*["'`]
@@ -40,12 +45,22 @@ WebAssembly\.(compile|instantiate)\s*\(
 
 # --- Script / worker / resource loading (script-src injection) ---
 createElement\s*\(\s*["'`]script["'`]
+createElement\s*\(\s*["'`](iframe|embed|object|link|source|base)["'`]
 \.src\s*=\s*
 \.text\s*=\s*
 new\s+Worker\s*\(
 new\s+SharedWorker\s*\(
 serviceWorker\.register\s*\(
 \.register\s*\(\s*["'`][^"'`]*\.js
+document\.head\s*\.\s*(append|appendChild|insertBefore)\s*\(
+
+# --- Client request sinks - url-controlled fetch XHR websocket beacon ---
+\bfetch\s*\(
+\bXMLHttpRequest\b
+\.open\s*\(\s*["'`](GET|POST|PUT|PATCH|DELETE|HEAD)
+new\s+EventSource\s*\(
+new\s+WebSocket\s*\(
+navigator\.sendBeacon\s*\(
 
 # --- Navigation / URL sinks (open-redirect + javascript: XSS) ---
 location\s*=\s*
@@ -56,6 +71,7 @@ window\.open\s*\(
 \.formAction\s*=
 navigation\.navigate\s*\(
 \.ping\s*=
+\.(host|hostname|pathname|protocol|search)\s*=\s*
 setAttribute\s*\(\s*["'`](href|src|srcdoc|formaction|action|xlink:href|data|poster|background|ping)["'`]
 \.(href|src|srcdoc|formaction|action)\s*=
 
@@ -64,7 +80,9 @@ setAttribute\s*\(\s*["'`](href|src|srcdoc|formaction|action|xlink:href|data|post
 \$\.parseHTML\s*\(
 jQuery\.parseHTML\s*\(
 jQuery\.globalEval\s*\(
-\.attr\s*\(\s*["'`](href|src)["'`]
+\$\.globalEval\s*\(
+\$\.(get|post|ajax|getJSON|getScript)\s*\(
+\.attr\s*\(\s*["'`](href|src|action|formaction)["'`]
 \.prop\s*\(\s*["'`](href|src)["'`]
 
 # --- Framework sanitizer bypass (Angular / AngularJS / Vue / Trusted Types) ---
@@ -72,6 +90,7 @@ bypassSecurityTrust(Html|Script|Style|Url|ResourceUrl)\s*\(
 \$sce\.(trustAs|trustAsHtml|trustAsJs|trustAsResourceUrl|trustAsCss)\s*\(
 ng-bind-html(-unsafe)?
 \[innerHTML\]
+:innerHTML
 \[src\]
 \$compile\s*\(
 \.compile\s*\(
@@ -79,20 +98,34 @@ trustedTypes\.createPolicy\s*\(
 TrustedHTML
 _\.template\s*\(
 Handlebars\.compile\s*\(
+Vue\.compile\s*\(
+\bunsafeHTML\s*\(
+\bmarked\s*\(
+\bmarkdownit\b
+\bshowdown\b
+sanitize\s*:\s*false
+\.allowHTML\b
+domProps
 
 # --- Source-side flow markers (user-controlled inputs that feed the sinks above) ---
 location\.(hash|search|pathname|href|host|hostname|protocol)
 document\.(URL|documentURI|URLUnencoded|baseURI|referrer|cookie|domain)
+document\.location\b
 window\.name
 history\.state
 history\.(pushState|replaceState)
 URLSearchParams
 \.(getParameter|getParameterByName)\s*\(
-searchParams\.get\s*\(
+searchParams\.(get|getAll)\s*\(
 (local|session)Storage\.getItem\s*\(
 \bindexedDB\b
 \.postMessage\s*\(
 \bnew\s+URL\s*\(
+decodeURIComponent\s*\(
+\bunescape\s*\(
+\batob\s*\(
+\bframeElement\b
+\bopener\b
 
 # --- postMessage handlers (origin-less listeners = cross-origin DOM XSS / data theft) ---
 addEventListener\s*\(\s*["'`]message["'`]
@@ -101,5 +134,8 @@ attachEvent\s*\(\s*["'`]onmessage["'`]
 
 # --- Prototype pollution: insecure recursive parsers and gadgets (hand to /xss prototype-pollution.md) ---
 \b(merge|extend|defaultsDeep|set|setWith|deepExtend|deparam|defaults)\s*\(
+\b(assignIn|assignInWith|mixin|mergeWith|zipObjectDeep)\s*\(
+Object\.assign\s*\(
 __proto__
 constructor\s*\[\s*["'`]prototype
+constructor\s*\.\s*prototype

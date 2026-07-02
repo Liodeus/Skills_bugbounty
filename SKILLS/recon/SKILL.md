@@ -1,6 +1,6 @@
 ---
 name: recon
-description: Web recon & attack-surface mapping for bug bounty. TRIGGER: user is starting an engagement on a wildcard/domain scope, mapping/fingerprinting an app, enumerating subdomains/assets, mining JavaScript bundles for endpoints/paths/webpack-chunks, hunting hardcoded secrets (API keys, cloud tokens, JWTs, private keys), or finding DOM-XSS sinks / postMessage handlers / hidden params before vuln hunting. Fully headless. Tools kept minimal: gau, xnLinkFinder, ugrep. Reuses /profundis (subdomain/host/DNS), /credential-leaks (valid creds via OathNet); hands DOM sinks & hidden params to /xss.
+description: "Use when the user is starting a bug bounty engagement and needs web recon & attack-surface mapping — a wildcard/domain scope, mapping/fingerprinting an app, enumerating subdomains/assets, mining JavaScript bundles for endpoints/paths/webpack-chunks, hunting hardcoded secrets (API keys, cloud tokens, JWTs, private keys), or finding DOM-XSS sinks / postMessage handlers / hidden params before vuln hunting. Fully headless; tools kept minimal (gau, xnLinkFinder, ugrep). Reuses /profundis (subdomain/host/DNS) and /credential-leaks (valid creds via OathNet); hands DOM sinks & hidden params to /xss."
 ---
 
 # Recon — Map, JS, Secrets, Sinks & Subdomains
@@ -171,8 +171,11 @@ of the app's error handler — read the body to tell a WAF block from a real app
 ### B.3 — Information disclosure: probe known juicy paths
 
 A fixed, high-signal list of paths that commonly leak source, config, secrets, debug info, or API
-docs. This is **targeted probing of ~50 known paths — not brute force** (brute force is `/ffuf-skill`).
+docs. This is **targeted probing of a curated known-path list — not brute force** (brute force is `/ffuf-skill`).
 One request each, classify the response, flag the juicy ones.
+
+The path list is shipped as `resources/juicy-paths.txt` (grouped by category; `#` comments and
+blank lines are skipped by the probe loop) — edit that file to tune the list, not the snippet.
 
 ```bash
 BASE="https://app.target.tld"
@@ -180,66 +183,8 @@ BASE="https://app.target.tld"
 while read -r p; do
   [[ -z "$p" || "$p" =~ ^[[:space:]]*# ]] && continue
   printf '%s\t%s\n' "$(curl -sk -o /dev/null -w '%{http_code} %{size_download}' "$BASE$p")" "$p"
-done <<'PATHS'
-# source control
-/.git/config
-/.git/HEAD
-/.svn/entries
-/.hg/store
-# config / env
-/.env
-/.env.production
-/.env.local
-/config.php
-/wp-config.php
-/web.config
-/application.yml
-/appsettings.json
-# API docs / specs
-/swagger.json
-/swagger/v1/swagger.json
-/openapi.json
-/v3/api-docs
-/api-docs
-/swagger-ui.html
-/swagger-ui/
-/swagger/
-/api/swagger-ui.html
-/application.wadl
-/graphql
-/graphiql
-/api
-/api/v1
-/api/v2
-# admin / panels
-/admin
-/admin.php
-/dashboard
-/wp-admin/
-/manager/html
-/actuator
-/actuator/env
-/actuator/heapdump
-# debug / runtime
-/phpinfo.php
-/info.php
-/server-status
-/server-info
-/jolokia
-/jolokia/list
-/metrics
-/trace
-# meta / misc
-/robots.txt
-/sitemap.xml
-/security.txt
-/.well-known/security.txt
-/package.json
-/composer.json
-/.DS_Store
-/.aws/credentials
-/.ssh/id_rsa
-PATHS
+done < .claude/skills/recon/resources/juicy-paths.txt
+# (symlinked at .claude/skills/recon/ in a workspace; adjust the path if run elsewhere)
 ```
 
 Classify the response (mirrors G's "a hit is a lead, not a finding" triage):
@@ -264,9 +209,11 @@ not 404s — distinguish it before reading anything into the statuses.
 Append common backup extensions/affixes to discovered file paths and common names, one request each,
 flag the 2xx hits, download and inspect. Cheap matrix over paths you already know.
 
+The extension/affix list is shipped as `resources/backup-exts.txt`.
+
 ```bash
 BASE="https://app.target.tld"
-exts=('.bak' '.old' '.new' '.orig' '.save' '.swp' '.swo' '~' '.zip' '.tar.gz' '.tgz' '.7z' '.rar' '.sql' '.dump' '.copy' '.1' '.txt')
+mapfile -t exts < <(grep -vE '^\s*#|^\s*$' .claude/skills/recon/resources/backup-exts.txt)
 # candidate bases: common names + parent dirs of paths discovered in F (paths.txt)
 mapfile -t bases < <(printf '%s\n' /index.php /api /config.php /backup /db /dump /admin \
                               "$(sed 's#\(.*\)/.*#\1#' paths.txt 2>/dev/null | sort -u)")
@@ -615,62 +562,8 @@ A leaked secret or a valid leaked credential is **itself reportable** even befor
 
 ## Quick reference — full pass
 
-```bash
-# A. (wildcard only) subdomains → invoke /profundis (no local tools). Add returned hosts to scope.
-
-# B. map + fingerprint frameworks
-curl -sk "https://app.target.tld/" -o index.html
-ugrep -aoErhE 'webpackChunk\w*|__NEXT_DATA__|/_next/|/_nuxt/|__NUXT__|data-reactroot|ng-version|__VUE__|/@vite/client' index.html | sort -u
-#    + headless walk (Lightpanda default, CLAUDE.md Mode 3) to capture JS-rendered routes & XHR endpoints
-
-# B.1 detect WAF (passive headers/cookies, then one noisy probe) — gates F ffuf; evasion → /waf-bypass
-curl -sI "https://app.target.tld/" | ugrep -iE 'cf-ray|cloudflare|x-amzn|x-iinfo|incap_ses|AkamaiGHost|Sucuri|X-Azure-Ref'
-curl -sk -o /dev/null -w '%{http_code}' "https://app.target.tld/?id='%20OR%201=1--"   # 403/406/451 = WAF
-
-# B.2 force errors to fingerprint (read framework/stack from error pages; version-only = noise)
-for p in "/%00" "/__nope__" "/?id='" ; do curl -sk -D - "https://app.target.tld$p" | head -n 20; done
-
-# B.3 information disclosure — probe the ~50-path list in §B.3 (/.env /.git/config /swagger /actuator/env /graphql /admin)
-#    2xx on a secrets/source path = reportable; swagger/graphql 200 → feed F; 401/403 → B.5
-
-# B.4 backup files — append .bak .old .zip .tar.gz .sql to known paths; flag 2xx; check /backup/ /old/ for autoindex
-
-# B.5 401/403 gate → invoke /403-401 (identity/path/URL-override/method set, WAF-vs-ACL triage); confirmed flip → /rbac or /idor
-
-# C. discover all JS — gau + headless-captured URLs
-gau --subs target.tld | ugrep -Ei '\.js(\?|$)' | sort -u > js_urls.txt
-mkdir -p js && while read -r u; do curl -sk "$u" -o "js/$(echo "$u"|sed 's#[^a-zA-Z0-9]#_#g').js"; done < js_urls.txt
-
-# D. webpack chunks — reconstruct lazy chunks from the manifest
-ugrep -aoErhE '[0-9]+:"[0-9a-f]{6,}"' js/ | sort -u > chunk_map.txt   # then build <base>/<id>.<hash>.chunk.js and curl
-
-# E. source maps
-ugrep -aoErh 'sourceMappingURL=[^ *]+' js/ | sort -u
-jq -r '.sourcesContent[]' main.js.map > src_dump.js 2>/dev/null
-
-# F. endpoints + params
-ugrep -aErhoE '"(/[a-zA-Z0-9_./-]+)"' js/ | tr -d '"' | sort -u > paths.txt
-xnLinkFinder -i js/ -sp target.tld -spo -sf target.tld -o endpoints.txt -op params.txt
-# F. (MANDATORY) active fuzz — /ffuf-skill always runs in recon; a WAF only tunes rate/payloads, never skips it
-#    if B.1 found a WAF: lower -rate/-t + small wordlist + payload obfuscation — adapt, don't abort
-ffuf -w ~/wordlists/common.txt -u "https://app.target.tld/FUZZ" -ac -o ffuf_dirs.json
-
-# G. secrets
-ugrep -aErni -f .claude/skills/recon/secret-patterns.txt js/ > grep_hits.txt
-
-# H. postMessage handlers + sender wildcard leaks + origin-check triage  → if sink reached, /xss
-ugrep -anE -f .claude/skills/recon/postmessage-handlers.txt js/
-ugrep -aonE "\.postMessage\s*\([^)]*,\s*[\"'\`]\*[\"'\`]|targetOrigin\s*:\s*[\"'\`]\*" js/
-ugrep -aohE ".{0,60}(addEventListener\(\s*[\"'\`]message|\bonmessage).{0,400}" js/ \
-  | head -c 8388608 \
-  | ugrep -E '\.data|innerHTML|eval|location\s*=|document\.write|srcdoc|setTimeout' | ugrep -vE '\.(origin|source)|isTrusted'
-
-# I. DOM sinks  → if source→sink flow, invoke /xss
-ugrep -aErni -f .claude/skills/recon/dom-sinks.txt js/ > dom_hits.txt
-
-# J. hidden params → reflected-XSS probe  → if it reflects, invoke /xss
-curl -sk "https://app.target.tld/page?<hiddenparam>=xss7331probe" | ugrep -o 'xss7331probe'
-
-# ✓ recon completion checklist (above) — don't start vuln hunting with an unchecked box that matters
-# → hand hosts/endpoints/secrets to the vuln skills; sinks/postMessage/hidden-params → /xss
-```
+The complete copy/paste command cheat sheet for the whole A→J pass lives in
+**[`resources/COMMANDS.md`](resources/COMMANDS.md)** — open it when you want the raw commands
+without the per-step reasoning above. It reads the shipped lists (`secret-patterns.txt`,
+`dom-sinks.txt`, `postmessage-handlers.txt`, `resources/juicy-paths.txt`,
+`resources/backup-exts.txt`), so the SKILL.md flow and the cheat sheet never drift.

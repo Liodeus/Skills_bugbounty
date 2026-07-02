@@ -1,0 +1,110 @@
+# B.4 backup/leftover extensions & affixes — appended to known file paths, one request each.
+# Blank lines and # comments are skipped by the probe loop.
+# Appended verbatim to a base path, so both dotted (.bak) and dashed (-old) affixes work:
+#   base /config.php  +  .bak  -> /config.php.bak
+#   base /config.php  +  -old  -> /config.php-old
+# generic backup markers
+.bak
+.bak2
+.bakup
+.bkp
+.bkup
+.bck
+.backup
+.old
+.old2
+.older
+.new
+.orig
+.original
+.save
+.saved
+.copy
+.copy2
+.default
+.dist
+.example
+.sample
+.template
+# editor / swap / partial-write leftovers
+.swp
+.swo
+.swn
+.un~
+~
+._
+.tmp
+.temp
+.part
+.filepart
+.crdownload
+.lock
+# numeric / rotated affixes
+.0
+.1
+.2
+.3
+-bak
+-old
+-backup
+-copy
+_bak
+_old
+_backup
+_copy
+# environment / stage affixes
+.prod
+.production
+.dev
+.development
+.stage
+.staging
+.test
+.local
+.live
+# archives (whole-app / source dumps)
+.zip
+.tar
+.tar.gz
+.tgz
+.tar.bz2
+.tbz2
+.tar.xz
+.txz
+.gz
+.bz2
+.xz
+.7z
+.rar
+.war
+.jar
+.ear
+.Z
+# databases / dumps
+.sql
+.sql.gz
+.sql.zip
+.dump
+.db
+.sqlite
+.sqlite3
+.mdb
+.bak.sql
+# data / logs / misc source
+.txt
+.csv
+.json
+.xml
+.yml
+.yaml
+.conf
+.config
+.ini
+.inc
+.log
+.out
+.err
+.patch
+.diff
+.rej
+.stackdump

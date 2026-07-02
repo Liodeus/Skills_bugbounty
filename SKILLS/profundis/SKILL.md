@@ -1,87 +1,87 @@
 ---
 name: profundis
-description: Recon via Profundis API (api.profundis.io) — 3 modes distincts pour découvrir sous-domaines/hosts/DNS. PAYANT à crédits. Préférer Host search & DNS search (1 crédit/page + filtrage raw_query puissant) à Subdomain enumeration (ceil(résultats/100) crédits). TOUJOURS estimate-first sur subdomains pour ne pas vider le wallet. Use for passive asset discovery during recon.
+description: "Use when the user is doing passive asset discovery during recon with the Profundis API (api.profundis.io) — 3 distinct modes to discover subdomains/hosts/DNS. CREDIT-BASED (paid). Prefer Host search & DNS search (1 credit/page + powerful raw_query filtering) over Subdomain enumeration (ceil(results/100) credits). ALWAYS estimate-first on subdomains so you don't drain the wallet."
 ---
 
-# Profundis — Recon d'actifs (api.profundis.io)
+# Profundis — Asset Recon (api.profundis.io)
 
-**Service payant à crédits.** 3 modes aux **sources** et **coûts** différents. Choisir le bon = économiser le wallet ET mieux filtrer. Doc : https://docs.profundis.io/
+**Credit-based paid service.** 3 modes with different **sources** and **costs**. Picking the right one = save the wallet AND filter better. Docs: https://docs.profundis.io/
 
 ```bash
 export PROFUNDIS_API_KEY="Ahsb5GINDyN2fscmxEJTZRQw4378gLHomPmHZbkkzGiNQJmyZbVSzNhKOIMi8Ttn"
 ```
-Auth (tous les endpoints) : header `X-API-KEY: $PROFUNDIS_API_KEY`, méthode `POST`, body JSON.
+Auth (all endpoints): header `X-API-KEY: $PROFUNDIS_API_KEY`, method `POST`, JSON body.
 
-## 🔭 Les 3 modes — lequel choisir
+## 🔭 The 3 modes — which to choose
 
-| Mode | Endpoint | Source des données | Filtrage | Coût | Quand |
+| Mode | Endpoint | Data source | Filtering | Cost | When |
 |---|---|---|---|---|---|
-| **Subdomain enumeration** | `/api/v2/common/data/subdomains` | agrège des **outils** (subfinder & co.) | aucun (juste `domain`) | **`ceil(résultats/100)` crédits** (peut être cher) | liste rapide exhaustive de sous-domaines d'un domaine |
-| **Host search** | `/api/v2/common/data/hosts` | **certstream / Certificate Transparency** + données de scan Profundis | **`raw_query` riche** (dizaines de champs) | **1 crédit / appel (= /page)** | filtrage précis (techno, port, cert, IP, ASN…), souvent **moins cher** |
-| **DNS search** | `/api/v2/common/data/dns` | **enregistrements DNS uniquement** | `raw_query` (host, type, resolution) | **1 crédit / appel (= /page)** | pivots DNS (A/CNAME/MX/TXT…), résolutions |
+| **Subdomain enumeration** | `/api/v2/common/data/subdomains` | aggregates **tools** (subfinder & co.) | none (just `domain`) | **`ceil(results/100)` credits** (can be expensive) | fast exhaustive subdomain list for a domain |
+| **Host search** | `/api/v2/common/data/hosts` | **certstream / Certificate Transparency** + Profundis scan data | **rich `raw_query`** (dozens of fields) | **1 credit / call (= /page)** | precise filtering (tech, port, cert, IP, ASN…), often **cheaper** |
+| **DNS search** | `/api/v2/common/data/dns` | **DNS records only** | `raw_query` (host, type, resolution) | **1 credit / call (= /page)** | DNS pivots (A/CNAME/MX/TXT…), resolutions |
 
-👉 **Règle de coût** : pour un gros domaine, `subdomains` peut coûter des dizaines de crédits (`ceil(n/100)`). `hosts`/`dns` = **1 crédit/page** + `raw_query` pour cibler → souvent **bien moins cher et plus chirurgical**. Privilégier hosts/dns quand on sait ce qu'on cherche.
+👉 **Cost rule**: for a large domain, `subdomains` can cost dozens of credits (`ceil(n/100)`). `hosts`/`dns` = **1 credit/page** + `raw_query` to target → often **much cheaper and more surgical**. Prefer hosts/dns when you know what you're looking for.
 
-## Autres endpoints utiles (swagger v2)
+## Other useful endpoints (swagger v2)
 
-Tous `POST /api/v2/common/data/...`, auth `X-API-KEY`.
+All `POST /api/v2/common/data/...`, auth `X-API-KEY`.
 
-| Endpoint | Body | Retour | Usage |
+| Endpoint | Body | Returns | Usage |
 |---|---|---|---|
-| `/domains` | `{"domain":"..."}` | `{domain, results:[{hosts:[], ip, ports:[]}]}` | **raccourci** : tous les hosts/IP/ports/ASN d'un domaine, sans `raw_query` ni pagination |
-| `/vhosts` | comme hosts (`raw_query`...) | `VhostData` (cert_subj, san, cert_org, not_before/after, port, resolution) | vhosts par **certificat/SAN** |
-| `/whois` | `{"domain":"..."}` | whois | enregistrement whois |
-| `/asn/details` | ASN | détails ASN | ranges/orga d'un ASN |
-| `/ip/intelligence` | IP | intel IP | géo/ASN/réputation IP |
-| `/data/hosts/favicons` | `raw_query` + `max_favicons` | hashes favicon | pivot favicon |
+| `/domains` | `{"domain":"..."}` | `{domain, results:[{hosts:[], ip, ports:[]}]}` | **shortcut**: all hosts/IPs/ports/ASN of a domain, no `raw_query` or pagination |
+| `/vhosts` | like hosts (`raw_query`...) | `VhostData` (cert_subj, san, cert_org, not_before/after, port, resolution) | vhosts by **certificate/SAN** |
+| `/whois` | `{"domain":"..."}` | whois | whois record |
+| `/asn/details` | ASN | ASN details | ranges/org of an ASN |
+| `/ip/intelligence` | IP | IP intel | geo/ASN/reputation of an IP |
+| `/data/hosts/favicons` | `raw_query` + `max_favicons` | favicon hashes | favicon pivot |
 
-> Pour "tous les hosts d'un domaine", `/domains {"domain":"x.com"}` est souvent le plus simple (1 appel, pas de dédup). `host:*.x.com` via `/hosts` donne plus de détail (port/cert/techno) mais nécessite pagination+dédup.
+> For "all hosts of a domain", `/domains {"domain":"x.com"}` is often the simplest (1 call, no dedup). `host:*.x.com` via `/hosts` gives more detail (port/cert/tech) but needs pagination + dedup.
 
-## Format de réponse (hosts/dns/vhosts)
+## Response format (hosts/dns/vhosts)
 
-Enveloppe : `{"data":[...], "total":N, "relation":"eq", "took":ms, "profundis_quotas":{...}}`.
-- `total` = nombre de **records** (≠ hosts uniques ; beaucoup de doublons host×port×timestamp → **dédupe sur `host`**).
-- `HostData` : `host, port, protocol, resolution, resolved_ips[], ip_country_code/ip_city/ip_state, as_name/as_number, status_code/status_code_message/status_code_range, title, technologies[], cpes[], headers[], header_server_name, content_length, favicon_hash, cert_subj/cert_issuer_cn/cert_subj_org/cert_trusted/cert_expired, is_waf_or_cdn/waf_or_cdn_type[], analytics_tags[], timestamp/date_checked, transport_proto`.
-- `DNSData` : `host, type` (A/AAAA/CNAME/MX/TXT/NS…), `value`, `as_levels[]`, `timestamp`.
+Envelope: `{"data":[...], "total":N, "relation":"eq", "took":ms, "profundis_quotas":{...}}`.
+- `total` = number of **records** (≠ unique hosts; lots of host×port×timestamp duplicates → **dedupe on `host`**).
+- `HostData`: `host, port, protocol, resolution, resolved_ips[], ip_country_code/ip_city/ip_state, as_name/as_number, status_code/status_code_message/status_code_range, title, technologies[], cpes[], headers[], header_server_name, content_length, favicon_hash, cert_subj/cert_issuer_cn/cert_subj_org/cert_trusted/cert_expired, is_waf_or_cdn/waf_or_cdn_type[], analytics_tags[], timestamp/date_checked, transport_proto`.
+- `DNSData`: `host, type` (A/AAAA/CNAME/MX/TXT/NS…), `value`, `as_levels[]`, `timestamp`.
 
-## Limites & pagination (quota retourné dans `profundis_quotas`)
-- `results_per_page` ≤ **50** (`MaxResultsPerQuery`) sinon `E1013`.
-- `page` ≤ 100 (max API) **mais** plafonné par le **quota du compte** `MaxPagination` (ex. **10** ici → 500 records max accessibles par query).
-- Quotas compte (exemple tier 2) : `MaxQueryPerDay/Month:2700`, `MaxResultsPerDay/Month:5000`, `MaxSubdomainsEnumPerMonth:50000`, `MaxFiltersPerQuery:5`, `MaxTimeoutPerQuery:25`.
-- **Rate limit court** : header `x-ratelimit-limit:1` / `x-ratelimit-remaining` / `x-ratelimit-reset` → **~1 req par fenêtre** ⇒ espacer (~20-25s) ou boucle de retry sur `429`.
-- Params hosts/dns/vhosts complets : `raw_query, include, aggregate, results_per_page, page, order_by, direction, time_frame, max_favicons`. (⚠️ `aggregate:true` observé renvoyant `data:[]` → ne pas compter dessus pour dédupe ; dédupe côté client sur `host`.)
-- ⚠️ Le **flux SSE (`Accept: text/event-stream`) peut renvoyer 000** (bufferisé). Utiliser le mode JSON normal sans `Accept: text/event-stream`.
+## Limits & pagination (quota returned in `profundis_quotas`)
+- `results_per_page` ≤ **50** (`MaxResultsPerQuery`) otherwise `E1013`.
+- `page` ≤ 100 (API max) **but** capped by the account **quota** `MaxPagination` (e.g. **10** here → 500 records max accessible per query).
+- Account quotas (example tier 2): `MaxQueryPerDay/Month:2700`, `MaxResultsPerDay/Month:5000`, `MaxSubdomainsEnumPerMonth:50000`, `MaxFiltersPerQuery:5`, `MaxTimeoutPerQuery:25`.
+- **Short rate limit**: headers `x-ratelimit-limit:1` / `x-ratelimit-remaining` / `x-ratelimit-reset` → **~1 req per window** ⇒ space out calls (~20-25s) or retry-loop on `429`.
+- Full hosts/dns/vhosts params: `raw_query, include, aggregate, results_per_page, page, order_by, direction, time_frame, max_favicons`. (⚠️ `aggregate:true` observed returning `data:[]` → don't rely on it for dedup; dedupe client-side on `host`.)
+- ⚠️ The **SSE stream (`Accept: text/event-stream`) can return 000** (buffered). Use plain JSON mode without `Accept: text/event-stream`.
 
 ---
 
-## 1) Subdomain enumeration (`/subdomains`) — agrégation d'outils
+## 1) Subdomain enumeration (`/subdomains`) — tool aggregation
 
-Body : `domain` (requis), `estimate` (bool), `limit` (int).
+Body: `domain` (required), `estimate` (bool), `limit` (int).
 
-### 💰 Coût & ESTIMATE-FIRST (obligatoire ici)
-- Facturation = **`ceil(returned_subdomains / 100)`** crédits. estimate ≈ **1 crédit**. Cap gratuit 300.
-- **TOUJOURS** prévisualiser le compte avant de payer :
+### 💰 Cost & ESTIMATE-FIRST (mandatory here)
+- Billing = **`ceil(returned_subdomains / 100)`** credits. estimate ≈ **1 credit**. Free cap 300.
+- **ALWAYS** preview the count before paying:
 ```bash
-# Étape 1 — ESTIMATE (~1 crédit) : combien ?
+# Step 1 — ESTIMATE (~1 credit): how many?
 curl -s -X POST \
   "https://api.profundis.io/api/v2/common/data/subdomains" \
   -H "X-API-KEY: $PROFUNDIS_API_KEY" -H "Content-Type: application/json" \
   -d '{"domain":"example.com","estimate":true,"limit":200}'
-# → coût réel = ceil(compte/100). Décider AVANT.
+# → real cost = ceil(count/100). Decide BEFORE.
 
-# Étape 2 — ÉNUMÉRATION RÉELLE, BORNÉE par limit (sans estimate = facturé)
+# Step 2 — REAL ENUMERATION, BOUNDED by limit (no estimate = billed)
 curl -s -X POST \
   "https://api.profundis.io/api/v2/common/data/subdomains" \
   -H "X-API-KEY: $PROFUNDIS_API_KEY" -H "Content-Type: application/json" \
-  -d '{"domain":"example.com","limit":100}'    # limit=100 → 1 crédit max
+  -d '{"domain":"example.com","limit":100}'    # limit=100 → 1 credit max
 ```
-> ⚠️ Jamais sans `limit` sur un domaine inconnu (risque `limit:"max"` = vider le wallet). `{"domain","estimate":true}` seul a renvoyé `E9999 missing fields` en live → garder un `limit` entier. Streaming : `-H "Accept: text/event-stream" -N`.
+> ⚠️ Never without `limit` on an unknown domain (risk `limit:"max"` = draining the wallet). `{"domain","estimate":true}` alone returned `E9999 missing fields` live → keep an integer `limit`. Streaming: `-H "Accept: text/event-stream" -N`.
 
 ---
 
-## 2) Host search (`/hosts`) — certstream/CT + scan, filtrage puissant
+## 2) Host search (`/hosts`) — certstream/CT + scan, powerful filtering
 
-Body : `raw_query` (requis), `include` (`"all"` ou `"host,resolution,port,..."`), `aggregate` (bool), `results_per_page` (int), `page` (int). **1 crédit / appel (page).**
+Body: `raw_query` (required), `include` (`"all"` or `"host,resolution,port,..."`), `aggregate` (bool), `results_per_page` (int), `page` (int). **1 credit / call (page).**
 
 ```bash
 curl -s -X POST \
@@ -90,10 +90,10 @@ curl -s -X POST \
   -d '{"raw_query":"host:*.example.com","include":"all","aggregate":false,"results_per_page":50,"page":1}'
 ```
 
-### Langage de requête `raw_query` (Host search)
-Opérateurs : `AND` `OR` `NOT`, parenthèses `()`, wildcard `*`, guillemets `"..."` (valeurs avec espaces), comparateurs `<` `>` (champs numériques).
+### `raw_query` query language (Host search)
+Operators: `AND` `OR` `NOT`, parentheses `()`, wildcard `*`, quotes `"..."` (values with spaces), comparators `<` `>` (numeric fields).
 
-| Champ | Usage / exemple |
+| Field | Usage / example |
 |---|---|
 | `host` | `host:*.example.com`, `host:sub.*.xyz` |
 | `port` | `port:80`, `port:84*`, `port<8080` |
@@ -111,15 +111,15 @@ Opérateurs : `AND` `OR` `NOT`, parenthèses `()`, wildcard `*`, guillemets `"..
 | `analytics_tags` | `analytics_tags:*` |
 | `content_length` | `content_length<2000` |
 
-Exemple complexe : `host:*.example.com AND (protocol:"https" OR status_code:"400") AND NOT technologies:cloudflare`
+Complex example: `host:*.example.com AND (protocol:"https" OR status_code:"400") AND NOT technologies:cloudflare`
 
-**Cas d'usage recon** : trouver les hosts d'une orga par certificat (`cert_subj_org:*orange*`), par favicon, par techno (repérer un CMS/version), par ASN/IP range, par header serveur — bien plus ciblé que la simple énum.
+**Recon use cases**: find an org's hosts by certificate (`cert_subj_org:*orange*`), by favicon, by tech (spot a CMS/version), by ASN/IP range, by server header — far more targeted than plain enumeration.
 
 ---
 
-## 3) DNS search (`/dns`) — enregistrements DNS uniquement
+## 3) DNS search (`/dns`) — DNS records only
 
-Body identique (`raw_query`, `include`, `aggregate`, `results_per_page`, `page`). **1 crédit / appel (page).** Champs : `host`, `type` (A/AAAA/CNAME/MX/TXT/NS…), `resolution`.
+Same body (`raw_query`, `include`, `aggregate`, `results_per_page`, `page`). **1 credit / call (page).** Fields: `host`, `type` (A/AAAA/CNAME/MX/TXT/NS…), `resolution`.
 
 ```bash
 curl -s -X POST \
@@ -127,28 +127,28 @@ curl -s -X POST \
   -H "X-API-KEY: $PROFUNDIS_API_KEY" -H "content-type: application/json" \
   -d '{"raw_query":"host:*.example.com AND type:CNAME","include":"all","aggregate":false,"results_per_page":50,"page":1}'
 ```
-**Cas d'usage** : pivots DNS (CNAME → subdomain takeover candidates), MX/TXT (mail/SPF), résolutions IP, mapping infra.
+**Use cases**: DNS pivots (CNAME → subdomain takeover candidates), MX/TXT (mail/SPF), IP resolutions, infra mapping.
 
 ---
 
-## Maîtrise du coût (hosts/dns)
-- Chaque appel = **1 crédit**, **par page**. Donc : `raw_query` le plus **étroit** possible + `results_per_page` raisonnable + **ne paginer que si nécessaire**.
-- `aggregate:true` regroupe (utile pour compter/voir la diversité avant de paginer en détail).
-- Pas de boucle de pagination non bornée : chaque `page` supplémentaire = +1 crédit.
+## Cost control (hosts/dns)
+- Each call = **1 credit**, **per page**. So: the **narrowest** possible `raw_query` + a reasonable `results_per_page` + **only paginate when necessary**.
+- `aggregate:true` groups results (useful to count/see diversity before paginating in detail).
+- No unbounded pagination loop: each extra `page` = +1 credit.
 
-## Codes d'erreur (tous endpoints)
-| HTTP | code | sens | action |
+## Error codes (all endpoints)
+| HTTP | code | meaning | action |
 |---|---|---|---|
-| 400 | `E9999` | body invalide / champ manquant | vérifier `raw_query`/`domain`(+`limit`) |
-| 402 | `Q2014` | plus de crédits (rien facturé) | recharger / stop |
-| 429 | — | `Limit exceeded` (rate limit) | espacer les appels |
+| 400 | `E9999` | invalid body / missing field | check `raw_query`/`domain`(+`limit`) |
+| 402 | `Q2014` | out of credits (nothing billed) | top up / stop |
+| 429 | — | `Limit exceeded` (rate limit) | space out calls |
 
-## Intégration recon
-- Complément d'OathNet (`oathnet_search_subdomains`) et de la recon manuelle ; ajouter les actifs trouvés à la **liste de cibles in-scope**.
-- Pipeline conseillé : `dns`/`hosts` (ciblé, 1 crédit) pour explorer/filtrer → `subdomains` (estimate d'abord) seulement si on veut la liste exhaustive.
+## Recon integration
+- Complements OathNet (`oathnet_search_subdomains`) and manual recon; add discovered assets to the **in-scope target list**.
+- Recommended pipeline: `dns`/`hosts` (targeted, 1 credit) to explore/filter → `subdomains` (estimate first) only if you want the exhaustive list.
 
-## ⚠️ Garde-fous wallet (résumé)
-1. **subdomains** : `estimate:true` AVANT, puis `limit` ; jamais `"max"` à l'aveugle.
-2. **hosts/dns** : 1 crédit/page → `raw_query` étroit, `results_per_page` borné, paginer avec parcimonie.
-3. `402` → stop. `429` → espacer.
-4. Un domaine/une requête par appel ; pas de boucle non bornée.
+## ⚠️ Wallet guardrails (summary)
+1. **subdomains**: `estimate:true` FIRST, then `limit`; never `"max"` blind.
+2. **hosts/dns**: 1 credit/page → narrow `raw_query`, bounded `results_per_page`, paginate sparingly.
+3. `402` → stop. `429` → space out.
+4. One domain/one query per call; no unbounded loop.

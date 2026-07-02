@@ -1,6 +1,6 @@
 ---
 name: credential-leaks
-description: Hunt leaked credentials via OathNet MCP (breach DBs + infostealer logs). Search by domain or email pattern, triage by recency & impact, validate carefully (anti-bot bypass, WAF, 2FA side-effects), and report responsibly without enumerating third-party accounts. Use during recon and whenever a target needs auth coverage.
+description: "Use when the user is hunting leaked credentials via OathNet MCP (breach DBs + infostealer logs) — searching by domain or email pattern, triaging by recency & impact, validating carefully (anti-bot bypass, WAF, 2FA side-effects), and reporting responsibly without enumerating third-party accounts. Use during recon and whenever a target needs auth coverage."
 ---
 
 # Credential Leaks — Cheatsheet
