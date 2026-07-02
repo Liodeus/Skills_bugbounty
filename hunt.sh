@@ -3,26 +3,21 @@
 # --- CONFIGURATION ---
 TARGET_NAME=$1
 
-INITIAL_GOAL='Context:
-- Program: [Program name]
-- Target: [URL]
-- My profile: I have those credentials: ... OR I don'\''t have any credentials
-Goal:
-Give me 10 priority spots to dig into in this app, ordered by
-likelihood of an exploitable vuln. For each lead:
-- The endpoint or feature involved
-- The suspected vuln type
-- Why you think it'\''s suspicious (observed pattern, abnormal behavior,
-  broken convention, etc.)
-- The fastest way to validate or rule out the lead
+INITIAL_GOAL="Target: $TARGET_NAME
+Scope: <wildcard *.tld | single host | raw request pasted below>
+Creds: <none | user1=...  user2=...>
+Stop condition: <run until HH:MM | none - run until the exit audit is clean, then pivot>
 
-Constraints:
-- No generic suggestions like "test for classic XSS". I want leads
-  specific to this app only.
-- Prioritize business logic bugs, access control, and complex chains.
-  Scanners already pick up the rest.
-- If you lack context on part of the app, say so rather than making
-  things up.'
+Start with /recon (full minimum coverage), then run the Hunting workflow
+end-to-end: /xss + /ssrf first, then the pivot gate. Everything per CLAUDE.md.
+
+Hold the line on these - they're where you drift:
+- Recon output is NOT a deliverable. Flow straight from recon into hunting; do not hand back.
+- A finding is a checkpoint, not a finish line (Order 1): run the what's-next sweep, bank it, keep hunting the rest of the surface.
+- Never pause to ask me. Make the call, log the assumption, keep moving.
+- Do not call this target \"done\" or \"barren\" until the exit audit is clean for every host (Order 2).
+
+Go."
 # Resolve the repo root from this script's REAL location, following symlinks — so the
 # launcher works whether run as ./hunt.sh, hunt (the ~/.local/bin symlink), or from
 # anywhere. `dirname "$0"` alone would resolve to ~/.local/bin when invoked via the symlink.
@@ -65,6 +60,13 @@ echo "🚀 Starting automated hunt for: $TARGET_NAME"
 
 # 2. Setup target workspace (in the dir we were invoked from)
 WORKSPACE="$INVOKED_FROM/$TARGET_NAME"
+# Guard: a plain file (or other non-dir) already sitting at the workspace path
+# makes mkdir fail and every later step cascade into "Not a directory" errors.
+# Fail fast with a clear message instead.
+if [ -e "$WORKSPACE" ] && [ ! -d "$WORKSPACE" ]; then
+    echo "❌ '$WORKSPACE' already exists and is not a directory. Remove it or pick another target name."
+    exit 1
+fi
 echo "🏗️  Creating workspace: $WORKSPACE"
 mkdir -p "$WORKSPACE"
 cp "$MASTER_CLAUDE_MD" "$WORKSPACE/CLAUDE.md"
@@ -144,7 +146,41 @@ echo "---"
 echo "✅ Environment Ready!"
 echo "🤖 Target: $TARGET_NAME"
 echo "📜 Agent Persona: Claude.md (Impact-Focused)"
-echo $INITIAL_GOAL
-echo "🔥 Run: 'claude --dangerously-skip-permissions' to begin."
+# Write the kickoff prompt into the workspace. The launch hints (how to start
+# Claude, what to paste) are printed INSIDE the tmux session below so they stay
+# visible — stdout printed here is hidden once `tmux attach` takes over the screen.
+printf '%s\n' "$INITIAL_GOAL" > "$WORKSPACE/GOAL.md"
+echo "📝 Kickoff prompt written → $WORKSPACE/GOAL.md"
 
-exec $SHELL
+# 4. Launch a tmux session for this hunt in the target workspace. Claude is NOT
+# auto-started — the session drops you at a shell in the workspace so you can
+# start Claude yourself (and paste the kickoff prompt from GOAL.md when ready).
+# Falls back to a plain shell when tmux isn't installed.
+CLAUDE_CMD='claude --dangerously-skip-permissions'
+if command -v tmux >/dev/null 2>&1; then
+    # tmux session names can't contain '.' or ':'; sanitize the target name.
+    SESSION="hunt-$(printf '%s' "$TARGET_NAME" | tr -c 'A-Za-z0-9_-' '_')"
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+        echo "🖥️  Attaching to existing tmux session: $SESSION"
+    else
+        echo "🖥️  Launching tmux session: $SESSION"
+        # Start the session with a startup command that prints the launch hints
+        # cleanly, then execs an interactive shell. Doing it this way (rather than
+        # send-keys) means the hints appear on their own — no raw echo command
+        # showing in the pane. Only on a NEW session — never touch an existing one,
+        # which could disrupt a Claude already running there.
+        tmux new-session -d -s "$SESSION" -c "$WORKSPACE" \
+            "printf '\n🔥 Start Claude:  %s\n👉 Then paste:    @GOAL.md follow this, start now\n\n' '$CLAUDE_CMD'; exec ${SHELL:-/bin/sh}"
+    fi
+    if [ -n "${TMUX:-}" ]; then
+        # Already inside tmux — switch instead of nesting sessions.
+        tmux switch-client -t "$SESSION"
+    else
+        exec tmux attach-session -t "$SESSION"
+    fi
+else
+    echo "⚠️  tmux not found — falling back to a plain shell."
+    echo "🔥 Start Claude:  $CLAUDE_CMD"
+    echo "👉 Then paste:    @GOAL.md follow this, start now"
+    exec $SHELL
+fi

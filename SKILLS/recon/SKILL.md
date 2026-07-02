@@ -480,6 +480,12 @@ a **`/exposure` unauth-discovery pass** (B.3–B.4) + **401/403 gate dispatch** 
 secrets** (G), **endpoint/path/param extraction** (F), and a **mandatory `/ffuf-skill` active pass**
 (F). Don't start vuln hunting with any of these missing.
 
+**Coverage is necessary but not sufficient: recon is only "done" once every high-value lead it
+surfaced is *dispositioned*, not merely listed.** A discovered secret, a data-bearing endpoint,
+an admin/hidden route, or an auth surface that is sitting in your notes unexamined means recon
+is unfinished — it feeds directly into CLAUDE.md's **exit audit**, which blocks the pivot until
+each lead is escalated or ruled-out-with-evidence. "I logged it" is not "I checked it."
+
 - [ ] **Tech stack identified** — language, framework, server, DB (B + B.2)
 - [ ] **WAF presence decided** — none assumed by default / product named (B.1); a WAF only *tunes* F's rate/payloads, never skips it
 - [ ] **`/exposure` pass run** (B.3–B.4) — juicy paths (secrets/source/config/admin), backup/leftover matrix, autoindex, VCS/actuator/API-docs — dispatched to the skill
@@ -496,6 +502,8 @@ secrets** (G), **endpoint/path/param extraction** (F), and a **mandatory `/ffuf-
 - [ ] **DOM sinks** mapped (I) → source-flow ones → `/xss`
 - [ ] **Hidden params** reflection-probed (J) → reflecting ones → `/xss`
 - [ ] **Auth flows captured** — session cookie / token per identity (unauth / user1 / user2), headers logged
+- [ ] **Every high-value lead dispositioned** — each secret, PII/data-bearing endpoint, auth/role surface, and interesting/hidden route is **escalated or explicitly ruled-out-with-evidence** (what you tried + the ruling-out response). No lead left "unexamined" — an unexamined lead blocks the exit audit (CLAUDE.md)
+- [ ] **PII / data exposure actively probed** on data-bearing endpoints — cross-account replay / unauth retry / small ID enumeration — **not assumed absent** (this is the exact miss the exit audit exists to catch)
 - [ ] **All findings saved** to working files (requests / responses) — system of record
 - [ ] **Per-host folder clean** — every artifact above lives under `hosts/<host>/` (nothing flat in the workspace root); on a wildcard scope this checklist is cleared **once per host**, and `scope.txt` lists all hosts covered
 

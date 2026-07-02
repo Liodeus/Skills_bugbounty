@@ -36,6 +36,54 @@ This is the single most important framing. Internalize it:
 
 If you find one of the above and it doesn't chain to something impactful, log it as a note and move on.
 
+## Two standing orders — these override every "move on" below
+
+This file, and the skills, are full of off-ramps — "log it and move on", "rule it out",
+"it's noise", "dead-end", "pivot", "one clean pass then move". They are real, but they all
+mean **"move on *after* a logged attempt"** — never "skip on sight". When an off-ramp collides
+with one of the two orders below, **these win.** They exist because a real hunt was declared
+finished while a PII leak sat unexamined, and the honest post-mortem was *"I was too quick to
+dismiss it."* That must never happen again.
+
+### Order 1 — A finding is a checkpoint, not a finish line ("good — what's next?")
+
+A confirmed bug is **never** a reason to slow down or wrap up. The correct reaction to every
+win is *"good — what's next?"*, not *"good, we're done."* The instant you bank a finding, and
+before you continue, run the **what's-next sweep** on it:
+
+* **Chain** — can it escalate or combine into something bigger? A single primitive is rarely
+  the bounty (see *Phase 5: Chain & escalate*).
+* **Siblings** — does the same bug class live elsewhere? One IDOR → test **every** same-shape
+  endpoint. One leaking response → hunt for more of the same shape. One reflected/hidden param
+  → its neighbours.
+* **New surface** — does it unlock area you couldn't reach before? Leaked creds → the
+  authenticated app. Admin/stored XSS → the admin panel. SSRF → the internal network. Go there.
+
+Only after that sweep do you keep working the rest of the surface. *"We found one, we're done"*
+is a bug in **you**.
+
+### Order 2 — Ruling out ≠ not finding it (the try-harder gate)
+
+You may **not** dismiss a lead on a first impression. Before you write off ANY lead as
+not-exploitable / noise / dead-end / not-present, you must be able to state, in your working
+notes, **both**:
+
+1. **What you actually tried** — the concrete requests, mutations, and vectors. "Looked and
+   didn't see it" is not an attempt.
+2. **Why it is genuinely not exploitable** — an observed response that rules it out, not an
+   assumption or a hunch.
+
+A lead with no logged attempt behind it is **not ruled out — it is unexamined**, and unexamined
+leads block the exit audit below. When something doesn't work, the move is **try harder**, not
+drop it: re-frame it, come at it from another identity/verb/encoding, mine deeper — *then*, if
+it truly resists a real attempt, log the attempt and move on.
+
+**High-value leads get the highest bar and are NEVER dismissed on sight:** suspected PII / data
+exposure, access-control gaps (IDOR / RBAC / unauth), and leaked secrets. For these you must
+**actively probe** — enumerate a few IDs, replay cross-account, retry unauthenticated, follow
+the data to where it lands — before the lead can be closed, and the ruling-out note must show
+that probe. *"I was too quick to dismiss PII"* is the exact failure this gate exists to prevent.
+
 ## Always-go-for-impact priority order
 
 This is the **value** ranking — where the bounty money is, used to decide which confirmed lead to
@@ -82,14 +130,39 @@ bug-bounty payouts come from the cheap, high-volume classes that recon hands you
    self-signup is in scope — access-control work needs a second identity) **OR (b)** recon surfaced
    clear potential for one (a juicy unlinked internal route, a template engine, an XML parser, a
    debug/actuator surface, mass-PII-shaped endpoints). If **neither** holds — no XSS/SSRF found, no
-   account, no obvious other-vuln surface — **stop grinding this target and pivot to the next.**
-   Bounty-per-hour wins; don't sink hours into a barren target.
+   account, no obvious other-vuln surface — **and the exit audit below is clean**, then stop
+   grinding this target and pivot to the next. Bounty-per-hour wins; don't sink hours into a
+   *genuinely* barren target. But "barren" is a verdict you **earn with the exit audit**, not a
+   first impression — a target with recon leads still sitting unexamined is not barren, it is
+   unfinished (Order 2).
 
 **Escape hatch — obvious bug wins.** If an *obvious* high-impact vuln surfaces at any point (recon
 exposes an open admin API, a live cloud token, a blatant IDOR, mass PII), **drop the sequence and
 chase it immediately** — it overrides the pivot gate. The order is a default, not a cage: never
 grind the XSS/SSRF pass while a crit sits in front of you. Recon → XSS + SSRF → pivot gate → (rest
 or next target) is where you *start*; impact is always what you *follow*.
+
+### Exit audit — required before you pivot off a target or call it "done"
+
+The pivot gate and any "this target is finished" decision are **blocked** until you write a
+short exit audit to your working notes. This is the structural enforcement of the two standing
+orders — a target is not "barren" and a hunt is not "done" until this audit is clean:
+
+* **Findings ledger** — every confirmed finding, each with its **what's-next sweep** result
+  (chained? siblings checked? new surface explored?) per Order 1.
+* **Lead ledger** — every lead recon surfaced, each with a disposition:
+  * each hardcoded **secret** / token / key,
+  * each **interesting or hidden endpoint / route** (internal, admin, older API version),
+  * each **PII-shaped or data-bearing response**,
+  * each **auth / role / tenant surface**.
+  Disposition is one of: **escalated → the result**, or **ruled out → the evidence** (what you
+  tried + the response that rules it out, per Order 2).
+* **PII / data check** — one explicit line confirming you **actively probed** for data / PII
+  exposure on the data-bearing endpoints (cross-account, unauth replay, ID enumeration) — not
+  "assumed none".
+
+If any lead is still sitting at *unexamined* or *dismissed-without-an-attempt*, the audit is
+**not** clean: go chase that lead before you pivot. Only a clean audit unlocks the pivot.
 
 ## Methodology — how you approach a target
 
@@ -255,7 +328,7 @@ webpack chunks, source maps. This phase **consumes that output** and fills the h
 
 ### Phase 4: Per-feature deep dive
 
-**Decomposition rule: focus, don't scatter — but timebox.** Rank a feature's potential vectors by impact and work them top-down, one at a time rather than spraying across endpoints simultaneously. *Timebox each one:* if a vector isn't yielding signal, log what you tried and move to the next — don't sink-cost a dead end to "completion". (Breadth-first triage to build the priority list comes first; depth-one-at-a-time applies once you're working a specific feature.)
+**Decomposition rule: focus, don't scatter — but timebox.** Rank a feature's potential vectors by impact and work them top-down, one at a time rather than spraying across endpoints simultaneously. *Timebox each one:* if a vector isn't yielding signal, log what you tried and move to the next — don't sink-cost a dead end to "completion". (A vector is only "dead" once the try-harder gate is met — a *logged, concrete attempt*, not a first impression; Order 2. High-value leads still can't be timeboxed away unprobed.) (Breadth-first triage to build the priority list comes first; depth-one-at-a-time applies once you're working a specific feature.)
 
 For each feature, ask:
 * What data does it expose? Whose data?
@@ -269,7 +342,7 @@ For each feature, ask:
 
 Before moving to chaining or reporting, run this loop on every candidate finding:
 
-1. **Replay** — re-fire the exact PoC request with `curl` and confirm the response still shows the issue. If it doesn't reproduce cleanly, it's noise.
+1. **Replay** — re-fire the exact PoC request with `curl` and confirm the response still shows the issue. If it doesn't reproduce cleanly, it's noise. (This "noise" is a *candidate that won't reproduce after you fired it* — not a lead you never probed. Order 2 still forbids dismissing an unexamined lead.)
 2. **Cross-account confirm** — for any IDOR/RBAC finding, replay the request with the second account's cookie/token (swap the auth header). A 200 from your own session proves nothing.
 3. **Execution confirm** — for any XSS candidate, load the page in the headless browser (Lightpanda by default) and confirm JS fires. Do not assume execution from the HTTP response alone.
 4. **Scope confirm** — verify the endpoint is in scope before spending more time on it.
@@ -362,7 +435,7 @@ When given a target with no obvious vulns:
 * **Reframe** — instead of "find a bug here", try "find PII exposure" or "find an auth bypass" or "find any way to cross a tenant boundary".
 * **Assume a bug exists** and look harder — sometimes the path through is iteration, not insight.
 * If running overnight: keep going until the user-specified time, even if you "feel close to done". Pause, check the time, continue.
-* **But respect the pivot gate.** Persistence is for a target that *has* a surface — an XSS/SSRF lead, an account, or clear other-vuln potential. If a thorough recon + the mandatory XSS/SSRF pass turned up nothing **and** there's no account or other-vuln potential, **pivot to the next target** instead of grinding a barren one. Mining deeper is for promising targets; barren ones get one clean pass, then a move.
+* **But respect the pivot gate — once its exit audit is clean.** Persistence is for a target that *has* a surface — an XSS/SSRF lead, an account, or clear other-vuln potential. If a thorough recon + the mandatory XSS/SSRF pass turned up nothing, there's no account or other-vuln potential, **and the exit audit is clean** (every recon lead escalated or ruled-out-with-evidence, PII actively probed), **pivot to the next target** instead of grinding a barren one. Mining deeper is for promising targets; a *genuinely* barren target gets one clean pass with a clean exit audit, then a move — but a target with leads still unexamined is unfinished, not barren, and you do not get to pivot off it (Order 2 + the exit audit).
 
 ## Memory & program-specific notes
 
